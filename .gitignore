@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+projects/
+models/*.model
+bin/handcheck
+*.tmp
+*.mp4
+*.wav
+*.m4a
+*.mp3

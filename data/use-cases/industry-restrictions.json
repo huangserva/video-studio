@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#4.3",
+  "policy": "校验器将主文档矩阵里含有 ✕ 的组合报告为 ERROR。I7/U7 是有条件限制，不是法律全面禁止；当前尚无条件复核机制，因此本版暂时拦截。",
+  "restrictions": [
+    {
+      "industryId": "I7", "useCaseId": "U7", "sourceCell": "○ ✕",
+      "kind": "conditional",
+      "reason": "健身学员案例不能涉及疾病治疗功能，出镜学员必须真实上过课；本版尚未实现条件核验，因此暂时拦截。"
+    },
+    {
+      "industryId": "I15", "useCaseId": "U1", "sourceCell": "✕",
+      "kind": "unsupported",
+      "reason": "主文档将医疗促销列为本工具不接的医疗广告。"
+    },
+    {
+      "industryId": "I15", "useCaseId": "U2", "sourceCell": "✕",
+      "kind": "unsupported",
+      "reason": "主文档将医疗产品卖点介绍列为本工具不接的医疗广告。"
+    },
+    {
+      "industryId": "I15", "useCaseId": "U5", "sourceCell": "**✕**",
+      "kind": "unsupported",
+      "reason": "主文档不开放医疗获客留资用途。"
+    },
+    {
+      "industryId": "I15", "useCaseId": "U6", "sourceCell": "**✕**",
+      "kind": "unsupported",
+      "reason": "主文档不开放医疗品牌故事用途。"
+    },
+    {
+      "industryId": "I15", "useCaseId": "U7", "sourceCell": "✕",
+      "kind": "prohibited",
+      "reason": "医疗广告不能使用代言人作推荐或证明。"
+    },
+    {
+      "industryId": "I16", "useCaseId": "U7", "sourceCell": "✕",
+      "kind": "prohibited",
+      "reason": "金融保险广告不能使用受益者的名义或形象作推荐或证明。"
+    },
+    {
+      "industryId": "I19", "useCaseId": "U7", "sourceCell": "**✕**",
+      "kind": "prohibited",
+      "reason": "教育培训广告不能使用学员的名义或形象作推荐或证明。"
+    }
+  ]
+}

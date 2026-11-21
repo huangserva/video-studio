@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "I14",
+  "category": "高客单",
+  "name": "房产",
+  "subdivisions": "新房、二手房、租房、中介",
+  "complianceLevel": "高",
+  "visualPriorities": "房源实拍、户型图",
+  "sourceMarker": "新",
+  "evidenceMarker": "官",
+  "sources": [
+    {
+      "title": "主文档行业清单与核对记录",
+      "path": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md",
+      "sections": [
+        "4.1",
+        "4.3",
+        "附录"
+      ]
+    },
+    {
+      "title": "抖音开放平台·房产行业线索解决方案",
+      "url": "https://developer.open-douyin.com/capacity-center-page/solution-detail/7301606676619083785"
+    }
+  ],
+  "rulePackStatus": "not-ready",
+  "availability": "blocked",
+  "availabilityReason": "规则包未就绪，不开放",
+  "complianceRuleRefs": [
+    "C3",
+    "C7",
+    "C12",
+    "C13",
+    "C14",
+    "C9"
+  ],
+  "complianceRulesSource": "library/industries/compliance-rules.json"
+}

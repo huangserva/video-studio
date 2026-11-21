@@ -1,0 +1,53 @@
+{
+  "id": "museum-paper",
+  "name": "博物馆纸感策展风",
+  "description": "暖米白纸感底色 + 丹砂红强调色 + 深灰字幕胶囊，源自南禅寺数字复原讲解成片实测版式。",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30
+  },
+  "colors": {
+    "background": "#f3f1e8",
+    "ink": "#252721",
+    "muted": "#6b665b",
+    "caption": "#5a554a",
+    "accent": "#963d2e",
+    "accentText": "#fffaf1",
+    "rule": "#d3cec0",
+    "ruleSoft": "#d9d4c7",
+    "frame": "#d1cbbd"
+  },
+  "fonts": {
+    "sans": "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "serif": "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "badge": "/System/Library/Fonts/PingFang.ttc"
+  },
+  "layouts": {
+    "split": {
+      "media": { "x": 72, "y": 197, "w": 1088, "h": 612 },
+      "host": { "x": 1186, "y": 174, "w": 662, "h": 662 }
+    },
+    "wide": {
+      "media": { "x": 272, "y": 134, "w": 1376, "h": 774 }
+    },
+    "host": {
+      "host": { "x": 1008, "y": 137, "w": 804, "h": 804 }
+    }
+  },
+  "subtitle": {
+    "fontName": "Hiragino Sans GB",
+    "fontSize": 41,
+    "primaryColor": "&H00F6FAFF",
+    "outlineColor": "&H3424201B",
+    "backColor": "&H6024201B",
+    "marginV": 54,
+    "maxCharsPerLine": 24
+  },
+  "aiLabel": {
+    "text": "AI 生成",
+    "fontSize": 23,
+    "x": 24,
+    "y": 24
+  }
+}

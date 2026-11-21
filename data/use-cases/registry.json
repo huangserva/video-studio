@@ -1,0 +1,336 @@
+{
+  "schemaVersion": 1,
+  "status": "draft",
+  "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md",
+  "note": "用途与默认时间轴驱动方式来自主文档草案，仅作数据契约，不改变旧运行器路由。",
+  "timelineDrivers": [
+    {
+      "id": "A",
+      "name": "幕表驱动",
+      "description": "配方给定分几幕、每幕是什么幕型，用户往里填内容",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#5.1",
+      "status": "draft",
+      "useCases": [
+        "U1",
+        "U2",
+        "U3",
+        "U4",
+        "U6",
+        "U7",
+        "U10",
+        "U11",
+        "U16"
+      ]
+    },
+    {
+      "id": "B",
+      "name": "讲稿驱动",
+      "description": "先写讲稿（出镜口播或画外旁白），按讲稿分幕，每幕配画面",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#5.1",
+      "status": "draft",
+      "useCases": [
+        "U5",
+        "U8",
+        "U9",
+        "U12",
+        "U14",
+        "U15",
+        "U21",
+        "U22"
+      ]
+    },
+    {
+      "id": "C",
+      "name": "故事驱动",
+      "description": "先立完整的故事线，再出分镜",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#5.1",
+      "status": "draft",
+      "useCases": [
+        "U17",
+        "U18",
+        "U19"
+      ]
+    },
+    {
+      "id": "D",
+      "name": "音乐驱动",
+      "description": "先分析音乐的节拍、段落、歌词时间戳，按节拍或段落分幕",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#5.1",
+      "status": "draft",
+      "useCases": [
+        "U13",
+        "U20"
+      ]
+    },
+    {
+      "id": "E",
+      "name": "素材驱动",
+      "description": "先看用户已有的视频（转写、找精彩段），再按目的剪",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#5.1",
+      "status": "draft",
+      "useCases": []
+    }
+  ],
+  "useCases": [
+    {
+      "id": "U1",
+      "name": "促销带货",
+      "purpose": "让人现在就买",
+      "briefSignals": "团购、优惠、限时、套餐、打折、满减、直播间",
+      "variesByIndustry": true,
+      "typicalDurationSec": {
+        "min": 15,
+        "max": 30
+      },
+      "defaultTimelineDriver": "A",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.1"
+    },
+    {
+      "id": "U2",
+      "name": "产品卖点介绍",
+      "purpose": "讲清楚产品好在哪，没有促销",
+      "briefSignals": "\"介绍一下我们的产品\"\"它能解决什么问题\"",
+      "variesByIndustry": true,
+      "typicalDurationSec": {
+        "min": 20,
+        "max": 45
+      },
+      "defaultTimelineDriver": "A",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.1"
+    },
+    {
+      "id": "U3",
+      "name": "新品上新",
+      "purpose": "告诉老客户和新客户有新东西",
+      "briefSignals": "新品、上新、新功能、新款、新车发布",
+      "variesByIndustry": true,
+      "typicalDurationSec": {
+        "min": 15,
+        "max": 30
+      },
+      "defaultTimelineDriver": "A",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.1"
+    },
+    {
+      "id": "U4",
+      "name": "开业和活动引流",
+      "purpose": "让人到店、来参加",
+      "briefSignals": "开业、开张、活动、周末、节日、到店、地址",
+      "variesByIndustry": true,
+      "typicalDurationSec": {
+        "min": 15,
+        "max": 30
+      },
+      "defaultTimelineDriver": "A",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.1"
+    },
+    {
+      "id": "U5",
+      "name": "获客留资",
+      "purpose": "让人留电话、预约、咨询",
+      "briefSignals": "预约、试听、试驾、免费咨询、报价、上门量房",
+      "variesByIndustry": true,
+      "typicalDurationSec": {
+        "min": 30,
+        "max": 60
+      },
+      "defaultTimelineDriver": "B",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.1"
+    },
+    {
+      "id": "U6",
+      "name": "品牌故事",
+      "purpose": "让人记住你、信任你",
+      "briefSignals": "创始人、老店、多少年、手艺、初心、工厂",
+      "variesByIndustry": true,
+      "typicalDurationSec": {
+        "min": 30,
+        "max": 90
+      },
+      "defaultTimelineDriver": "A",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.1"
+    },
+    {
+      "id": "U7",
+      "name": "客户案例和证言",
+      "purpose": "用别人的结果说服人",
+      "briefSignals": "客户评价、前后对比、成功案例、学员成果",
+      "variesByIndustry": true,
+      "typicalDurationSec": {
+        "min": 20,
+        "max": 45
+      },
+      "defaultTimelineDriver": "A",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.1"
+    },
+    {
+      "id": "U8",
+      "name": "知识内容引流",
+      "purpose": "先给有用的内容，把人吸引过来",
+      "briefSignals": "科普、攻略、避坑、技巧、知识、答疑",
+      "variesByIndustry": true,
+      "typicalDurationSec": {
+        "min": 30,
+        "max": 90
+      },
+      "defaultTimelineDriver": "B",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.1"
+    },
+    {
+      "id": "U9",
+      "name": "教程和使用演示",
+      "purpose": "教会用户怎么用",
+      "briefSignals": "怎么用、操作步骤、上手、安装、做法",
+      "variesByIndustry": true,
+      "typicalDurationSec": {
+        "min": 30,
+        "max": 120
+      },
+      "defaultTimelineDriver": "B",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.1"
+    },
+    {
+      "id": "U10",
+      "name": "企业宣传片",
+      "purpose": "对外介绍公司",
+      "briefSignals": "公司介绍、企业形象、合作方看",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "A",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U11",
+      "name": "招聘",
+      "purpose": "招人",
+      "briefSignals": "招聘、岗位、团队氛围",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "A",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U12",
+      "name": "内部培训",
+      "purpose": "教员工",
+      "briefSignals": "新员工、培训、操作规范、安全",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "B",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U13",
+      "name": "发布会和活动开场",
+      "purpose": "活动现场播放",
+      "briefSignals": "开场、年会、倒计时、大屏",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "D",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U14",
+      "name": "汇报展示",
+      "purpose": "把材料讲给人听",
+      "briefSignals": "PPT、汇报、方案、路演",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "B",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U15",
+      "name": "个人 IP 日常",
+      "purpose": "涨粉、立人设",
+      "briefSignals": "我是博主、日更、个人账号",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "B",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U16",
+      "name": "个人作品集",
+      "purpose": "展示自己的能力",
+      "briefSignals": "作品集、求职、接单",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "A",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U17",
+      "name": "纪念和回忆",
+      "purpose": "纪念一个人或一件事",
+      "briefSignals": "生日、婚礼、毕业、周年、纪念",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "C",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U18",
+      "name": "剧情短剧",
+      "purpose": "讲故事",
+      "briefSignals": "短剧、剧情、角色、反转",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "C",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U19",
+      "name": "动画和绘本故事",
+      "purpose": "讲给孩子或品牌动画",
+      "briefSignals": "绘本、动画、童话",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "C",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U20",
+      "name": "音乐 MV 和歌词视频",
+      "purpose": "配合一首歌",
+      "briefSignals": "我有一首歌、MV、主题曲",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "D",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U21",
+      "name": "新闻和热点点评",
+      "purpose": "跟上热点",
+      "briefSignals": "最新消息、热点、事件",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "B",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    },
+    {
+      "id": "U22",
+      "name": "报告和文章解读",
+      "purpose": "把长材料讲短",
+      "briefSignals": "报告、论文、文章、书",
+      "variesByIndustry": false,
+      "typicalDurationSec": null,
+      "durationNote": "主文档第三节没有提供典型时长，本次不作推断。",
+      "defaultTimelineDriver": "B",
+      "source": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md#3.2"
+    }
+  ]
+}

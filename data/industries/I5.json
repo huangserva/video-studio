@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "I5",
+  "category": "本地生活",
+  "name": "本地服务",
+  "subdivisions": "家政、维修、搬家、保洁、开锁",
+  "complianceLevel": "中",
+  "visualPriorities": "服务前后对比、师傅出镜",
+  "sourceMarker": "新",
+  "evidenceMarker": "资",
+  "sources": [
+    {
+      "title": "主文档行业清单与核对记录",
+      "path": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md",
+      "sections": [
+        "4.1",
+        "4.3",
+        "附录"
+      ]
+    }
+  ],
+  "evidenceNote": "主文档仅列行业文章描述，没有给出精确链接，本次没有补猜来源。",
+  "rulePackStatus": "not-ready",
+  "availability": "not-integrated",
+  "availabilityReason": "本次只建立基础数据，尚未接入生产流程。",
+  "complianceRuleRefs": [
+    "C3",
+    "C7",
+    "C12",
+    "C13",
+    "C14"
+  ],
+  "complianceRulesSource": "library/industries/compliance-rules.json"
+}

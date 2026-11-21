@@ -1,0 +1,50 @@
+{
+  "id": "curator-h3-explainer",
+  "name": "策展外壳 + 5-10秒短出镜 H3 讲解",
+  "timelineDriver": "B",
+  "useCases": ["U8", "U9", "U14", "U15"],
+  "defaultStyle": "museum-paper",
+  "aspectRatio": "16:9",
+  "resolution": [1920, 1080],
+  "fps": 30,
+  "hostSegment": {
+    "provider": "local-h3-aicg3d-13",
+    "resolution": "480P",
+    "aspectRatio": "1:1",
+    "outputSize": [960, 960],
+    "fps": 24,
+    "recommendedDurationSec": [5.0, 10.0],
+    "maxDurationSec": 15.0,
+    "audioMode": "数字人（锁定音频）",
+    "refine": {
+      "enabled": true,
+      "steps": 4,
+      "denoise": 0.35,
+      "scale": 1.5
+    },
+    "seedBase": 7822077,
+    "seedRetryStride": 104729
+  },
+  "gates": {
+    "dryWaveformCorrMin": 0.975,
+    "trailingPeakMax": 200,
+    "syncWindowSpreadMaxMs": 80,
+    "syncAcceptedAbsMaxMs": 40,
+    "syncConfidenceMin": 1.5,
+    "requireAudioShaMatch": true,
+    "requireAiLabel": true,
+    "pilotFirst": true
+  },
+  "humanGates": [
+    "select-recipe-and-brief",
+    "approve-script-and-pilot",
+    "final-review"
+  ],
+  "structure": [
+    "每章只取开头 1-2 句（5-10 秒）做 H3 腰上带手势出镜",
+    "其余句子切回全屏或 wide 版式展示模型、网页、录屏或资料卡",
+    "手势按具体词眼和秒数绑定，克制在胸口以下、不挡嘴不出框",
+    "每段 H3 必须先验波形、再跑 SyncNet 逐窗；稳定才整帧移画，不稳换 seed 重生",
+    "最终 1080p 成片必须再裁出人物小窗复测 SyncNet，确认最大绝对偏移 <= 40 ms"
+  ]
+}

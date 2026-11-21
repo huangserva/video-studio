@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "I9",
+  "category": "零售电商",
+  "name": "美妆个护",
+  "subdivisions": "彩妆、护肤、洗护",
+  "complianceLevel": "中",
+  "visualPriorities": "上脸试色、质地特写",
+  "sourceMarker": "新（BrewReel 并在电商里）",
+  "evidenceMarker": "资",
+  "sources": [
+    {
+      "title": "主文档行业清单与核对记录",
+      "path": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md",
+      "sections": [
+        "4.1",
+        "4.3",
+        "附录"
+      ]
+    },
+    {
+      "title": "CBNData·2024 抖音护肤行业白皮书",
+      "url": "https://www.cbndata.com/information/293636"
+    }
+  ],
+  "rulePackStatus": "not-ready",
+  "availability": "not-integrated",
+  "availabilityReason": "本次只建立基础数据，尚未接入生产流程。",
+  "complianceRuleRefs": [
+    "C3",
+    "C7",
+    "C12",
+    "C13",
+    "C14",
+    "C11"
+  ],
+  "complianceRulesSource": "library/industries/compliance-rules.json",
+  "attribution": {
+    "project": "BrewReel",
+    "repository": "https://github.com/Finderchangchang/brewreel",
+    "revision": "2aed49a8daeacee8ad96ddfd2906a04e329033e2",
+    "license": "Apache-2.0",
+    "copyright": "Copyright 2026 柳伟杰 Liu Weijie (GitHub: Finderchangchang) and contributors",
+    "licenseFile": "library/licenses/BrewReel-LICENSE.txt",
+    "noticeFile": "library/licenses/BrewReel-NOTICE.txt",
+    "modificationNotice": "video_xx 将主文档所引用的行业分类整理为 JSON；美妆和母婴从电商拆分。本次没有复制 BrewReel 代码或新增其推荐镜头结构。",
+    "sourcePath": "industries/ecommerce/recipe.md",
+    "sourceUrl": "https://github.com/Finderchangchang/brewreel/blob/2aed49a8daeacee8ad96ddfd2906a04e329033e2/industries/ecommerce/recipe.md"
+  }
+}

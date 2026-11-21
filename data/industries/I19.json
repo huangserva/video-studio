@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "I19",
+  "category": "教育",
+  "name": "教育培训",
+  "subdivisions": "职业技能、考证、成人兴趣；K12 另有政策限制",
+  "complianceLevel": "高",
+  "visualPriorities": "老师出镜、课程界面",
+  "sourceMarker": "B（只含成人职业培训）",
+  "evidenceMarker": "B",
+  "sources": [
+    {
+      "title": "主文档行业清单与核对记录",
+      "path": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md",
+      "sections": [
+        "4.1",
+        "4.3",
+        "附录"
+      ]
+    }
+  ],
+  "rulePackStatus": "not-ready",
+  "availability": "blocked",
+  "availabilityReason": "规则包未就绪，不开放",
+  "complianceRuleRefs": [
+    "C3",
+    "C7",
+    "C12",
+    "C13",
+    "C14",
+    "C6"
+  ],
+  "complianceRulesSource": "library/industries/compliance-rules.json",
+  "attribution": {
+    "project": "BrewReel",
+    "repository": "https://github.com/Finderchangchang/brewreel",
+    "revision": "2aed49a8daeacee8ad96ddfd2906a04e329033e2",
+    "license": "Apache-2.0",
+    "copyright": "Copyright 2026 柳伟杰 Liu Weijie (GitHub: Finderchangchang) and contributors",
+    "licenseFile": "library/licenses/BrewReel-LICENSE.txt",
+    "noticeFile": "library/licenses/BrewReel-NOTICE.txt",
+    "modificationNotice": "video_xx 将主文档所引用的行业分类整理为 JSON；美妆和母婴从电商拆分。本次没有复制 BrewReel 代码或新增其推荐镜头结构。",
+    "sourcePath": "industries/education/recipe.md",
+    "sourceUrl": "https://github.com/Finderchangchang/brewreel/blob/2aed49a8daeacee8ad96ddfd2906a04e329033e2/industries/education/recipe.md"
+  }
+}

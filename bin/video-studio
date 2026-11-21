@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PY="${VIDEO_STUDIO_PYTHON:-/opt/homebrew/bin/python3}"
+if [ ! -x "$PY" ]; then
+  PY="$(command -v python3)"
+fi
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PY" -m studio "$@"

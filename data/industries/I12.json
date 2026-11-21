@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "I12",
+  "category": "零售电商",
+  "name": "农产品",
+  "subdivisions": "生鲜水果、土特产",
+  "complianceLevel": "中",
+  "visualPriorities": "产地实拍、农户出镜",
+  "sourceMarker": "新",
+  "evidenceMarker": "资",
+  "sources": [
+    {
+      "title": "主文档行业清单与核对记录",
+      "path": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md",
+      "sections": [
+        "4.1",
+        "4.3",
+        "附录"
+      ]
+    },
+    {
+      "title": "抖音电商丰收大会（农产品）",
+      "url": "https://www.cnr.cn/mspd/jrhm/20260919/t20260919_527818446.shtml"
+    }
+  ],
+  "rulePackStatus": "not-ready",
+  "availability": "not-integrated",
+  "availabilityReason": "本次只建立基础数据，尚未接入生产流程。",
+  "complianceRuleRefs": [
+    "C3",
+    "C7",
+    "C12",
+    "C13",
+    "C14"
+  ],
+  "complianceRulesSource": "library/industries/compliance-rules.json"
+}

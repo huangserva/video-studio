@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "I15",
+  "category": "高合规",
+  "name": "医疗健康",
+  "subdivisions": "医院、诊所、口腔、医美、药品、保健品",
+  "complianceLevel": "很高",
+  "visualPriorities": "医生出镜（要资质）",
+  "sourceMarker": "新",
+  "evidenceMarker": "资",
+  "sources": [
+    {
+      "title": "主文档行业清单与核对记录",
+      "path": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md",
+      "sections": [
+        "4.1",
+        "4.3",
+        "附录"
+      ]
+    },
+    {
+      "title": "抖音医疗行业内容发布原则",
+      "url": "https://www.douyin.com/rule/policy?activeId=medical_convention"
+    },
+    {
+      "title": "网信办《关于规范\"自媒体\"医疗科普行为的通知》（国家卫健委转载）",
+      "url": "https://www.nhc.gov.cn/wjw/mtbd/202508/fcf3c0956a9441d781ca529030a42d6b.shtml"
+    }
+  ],
+  "rulePackStatus": "not-ready",
+  "availability": "blocked",
+  "availabilityReason": "规则包未就绪，不开放",
+  "complianceRuleRefs": [
+    "C3",
+    "C7",
+    "C12",
+    "C13",
+    "C14",
+    "C1",
+    "C2",
+    "C4"
+  ],
+  "complianceRulesSource": "library/industries/compliance-rules.json"
+}

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "I21",
+  "category": "制造",
+  "name": "制造业和 B2B",
+  "subdivisions": "工业品、外贸、原材料、设备",
+  "complianceLevel": "低",
+  "visualPriorities": "工厂、产线、参数",
+  "sourceMarker": "新",
+  "evidenceMarker": "官 资",
+  "sources": [
+    {
+      "title": "主文档行业清单与核对记录",
+      "path": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md",
+      "sections": [
+        "4.1",
+        "4.3",
+        "附录"
+      ]
+    },
+    {
+      "title": "外贸工厂探厂视频（亿邦动力）",
+      "url": "https://www.ebrun.com/20250903/598204.shtml"
+    },
+    {
+      "title": "抖音开放平台·线索类小程序通用解决方案",
+      "url": "https://developer.open-douyin.com/capacity-center-page/solution-detail/7225137608559444023"
+    }
+  ],
+  "rulePackStatus": "not-ready",
+  "availability": "not-integrated",
+  "availabilityReason": "本次只建立基础数据，尚未接入生产流程。",
+  "complianceRuleRefs": [
+    "C3",
+    "C7",
+    "C12",
+    "C13",
+    "C14"
+  ],
+  "complianceRulesSource": "library/industries/compliance-rules.json"
+}

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "I17",
+  "category": "专业服务",
+  "name": "法律服务",
+  "subdivisions": "律所、法律咨询",
+  "complianceLevel": "高",
+  "visualPriorities": "律师出镜",
+  "sourceMarker": "新",
+  "evidenceMarker": "资",
+  "sources": [
+    {
+      "title": "主文档行业清单与核对记录",
+      "path": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md",
+      "sections": [
+        "4.1",
+        "4.3",
+        "附录"
+      ]
+    },
+    {
+      "title": "巨量引擎·抖音法律行业报告（东方财富转载 PDF）",
+      "url": "https://pdf.dfcfw.com/pdf/H3_AP202503061644099951_1.pdf"
+    },
+    {
+      "title": "北京市律师行业网络推广合规倡议书",
+      "url": "https://www.beijinglawyers.org.cn/cac/1763606958335.htm"
+    }
+  ],
+  "rulePackStatus": "not-ready",
+  "availability": "blocked",
+  "availabilityReason": "规则包未就绪，不开放",
+  "complianceRuleRefs": [
+    "C3",
+    "C7",
+    "C12",
+    "C13",
+    "C14",
+    "C10"
+  ],
+  "complianceRulesSource": "library/industries/compliance-rules.json"
+}

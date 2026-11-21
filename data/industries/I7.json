@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "I7",
+  "category": "本地生活",
+  "name": "健身运动",
+  "subdivisions": "健身房、瑜伽、普拉提、游泳",
+  "complianceLevel": "中",
+  "visualPriorities": "教练出镜、场馆实拍",
+  "sourceMarker": "新",
+  "evidenceMarker": "资",
+  "sources": [
+    {
+      "title": "主文档行业清单与核对记录",
+      "path": ".hive/decisions/draft-2026-09-28-use-industry-pipeline.md",
+      "sections": [
+        "4.1",
+        "4.3",
+        "附录"
+      ]
+    },
+    {
+      "title": "新榜·健身房短视频和直播（超级猩猩、一兆韦德）",
+      "url": "https://newrank.cn/article/detail/20658"
+    },
+    {
+      "title": "21 世纪经济报道·乐刻抖音团购",
+      "url": "https://m.21jingji.com/article/20240606/338eb519c495396545e49c6bf80b36d7.html"
+    }
+  ],
+  "rulePackStatus": "not-ready",
+  "availability": "not-integrated",
+  "availabilityReason": "本次只建立基础数据，尚未接入生产流程。",
+  "complianceRuleRefs": [
+    "C3",
+    "C7",
+    "C12",
+    "C13",
+    "C14"
+  ],
+  "complianceRulesSource": "library/industries/compliance-rules.json"
+}
