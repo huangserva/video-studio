@@ -8,11 +8,18 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .config import ffmpeg_bin, ffprobe_bin
+from .config import (
+    DEFAULT_LUFS_TOLERANCE,
+    DEFAULT_MAX_TRUE_PEAK_DB,
+    DEFAULT_TARGET_LUFS,
+    ffmpeg_bin,
+    ffprobe_bin,
+)
 from .project import load_json, save_json
 from .sync_gate import audio_stream_sha256, make_visual_grid, measure_syncnet, video_nframes
 
 LUFS_RE = re.compile(r"I:\s*(-?\d+(?:\.\d+)?)\s*LUFS")
+TRUE_PEAK_RE = re.compile(r"True peak:\s*\n\s*Peak:\s*(-?\d+(?:\.\d+)?|-inf)\s*dBFS")
 
 
 def probe_video(path: Path) -> dict[str, Any]:
@@ -45,6 +52,34 @@ def probe_video(path: Path) -> dict[str, Any]:
         "sizeBytes": int(data["format"]["size"]),
         "frames": video_nframes(path),
     }
+
+
+def measure_loudness(path: Path) -> dict[str, float | None]:
+    """整体响度（LUFS）和真峰值（dBTP），取 ebur128 最后的汇总。"""
+    proc = subprocess.run(
+        [
+            ffmpeg_bin(),
+            "-nostdin",
+            "-v",
+            "info",
+            "-i",
+            str(path),
+            "-vn",
+            "-af",
+            "ebur128=peak=true",
+            "-f",
+            "null",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    lufs = LUFS_RE.findall(proc.stderr)
+    peaks = TRUE_PEAK_RE.findall(proc.stderr)
+    tp: float | None = None
+    if peaks:
+        tp = float("-inf") if peaks[-1] == "-inf" else float(peaks[-1])
+    return {"integratedLufs": float(lufs[-1]) if lufs else None, "truePeakDb": tp}
 
 
 def measure_integrated_lufs(path: Path) -> float | None:
@@ -80,10 +115,14 @@ def run_final_qc(
     expected_fps: float = 30.0,
     max_sync_abs_ms: int = 40,
     min_window_duration_sec: float = 2.0,
+    target_lufs: float | None = DEFAULT_TARGET_LUFS,
+    lufs_tolerance: float = DEFAULT_LUFS_TOLERANCE,
+    max_true_peak_db: float = DEFAULT_MAX_TRUE_PEAK_DB,
 ) -> dict[str, Any]:
     report_dir.mkdir(parents=True, exist_ok=True)
     spec = probe_video(video)
-    lufs = measure_integrated_lufs(video)
+    loud = measure_loudness(video) if spec["audioCodec"] else {"integratedLufs": None, "truePeakDb": None}
+    lufs = loud["integratedLufs"]
     audio_sha = audio_stream_sha256(video) if spec["audioCodec"] else None
     grid_path = report_dir / f"{video.stem}-qc-grid.jpg"
     make_visual_grid(video, grid_path, count=12, fps=spec["fps"])
@@ -95,6 +134,16 @@ def run_final_qc(
         failures.append(f"帧率不符: {spec['fps']} != {expected_fps}")
     if not spec["audioCodec"]:
         failures.append("缺少音频流")
+    elif target_lufs is not None:
+        if lufs is None:
+            failures.append("测不出整体响度")
+        elif abs(lufs - target_lufs) > lufs_tolerance + 1e-9:
+            failures.append(
+                f"整体响度 {lufs:.1f} LUFS 不在 {target_lufs - lufs_tolerance:.1f} 到 {target_lufs + lufs_tolerance:.1f} LUFS 之间"
+            )
+        tp = loud["truePeakDb"]
+        if tp is not None and tp > max_true_peak_db + 1e-9:
+            failures.append(f"真峰值 {tp:.1f} dBTP 超过 {max_true_peak_db:.1f} dBTP")
 
     audio_match = None
     if base_audio_video is not None:
@@ -156,6 +205,10 @@ def run_final_qc(
         "failures": failures,
         "spec": spec,
         "integratedLufs": lufs,
+        "truePeakDb": loud["truePeakDb"],
+        "loudnessTarget": None if target_lufs is None else {
+            "lufs": target_lufs, "toleranceLu": lufs_tolerance, "maxTruePeakDb": max_true_peak_db,
+        },
         "audioSha256": audio_sha,
         "audioMatchedBase": audio_match,
         "visualGrid": str(grid_path),

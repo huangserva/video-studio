@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
 from typing import Any
 
-from .config import DATA_DIR, DEFAULT_H3_ENDPOINT, DEFAULT_QWEN_EDIT_ENDPOINT, DEFAULT_TTS_ENDPOINT
+from .config import (
+    DATA_DIR,
+    DEFAULT_COVER_SEC,
+    DEFAULT_H3_ENDPOINT,
+    DEFAULT_QWEN_EDIT_ENDPOINT,
+    DEFAULT_SENTENCE_GAP_SEC,
+    DEFAULT_SPEED,
+    DEFAULT_TAKES_PER_SENTENCE,
+    DEFAULT_TARGET_LUFS,
+    DEFAULT_TTS_ENDPOINT,
+)
 
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
@@ -23,6 +34,14 @@ def save_json(path: Path, data: Any) -> Path:
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
     return path
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def load_recipe(recipe_id: str) -> dict[str, Any]:
@@ -114,8 +133,18 @@ def init_project(
             "provider": "cosyvoice3",
             "endpoint": DEFAULT_TTS_ENDPOINT,
             "voiceId": voice_id,
-            "speed": 1.2,
+            "speed": DEFAULT_SPEED,
             "sampleRate": 24000,
+            "takesPerSentence": DEFAULT_TAKES_PER_SENTENCE,
+            "sentenceGapSec": DEFAULT_SENTENCE_GAP_SEC,
+            "targetLufs": DEFAULT_TARGET_LUFS,
+        },
+        "cover": {
+            "enabled": True,
+            "durationSec": DEFAULT_COVER_SEC,
+            "image": "",
+            "headline": title,
+            "subline": subtitle,
         },
         "presenter": {
             "enabled": True,

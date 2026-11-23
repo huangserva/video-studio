@@ -10,3 +10,4 @@ bin/handcheck
 *.wav
 *.m4a
 *.mp3
+models/*.bin

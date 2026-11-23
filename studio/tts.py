@@ -1,9 +1,11 @@
-"""CosyVoice3 干声生成、外部干声导入、出镜子段切分与时间轴构建。"""
+"""CosyVoice3 逐句干声生成（每句多条择优）、局部重配、出镜子段切分与时间轴构建。"""
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
+import re
 import shlex
 import subprocess
 import wave
@@ -12,16 +14,24 @@ from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from .config import ffmpeg_bin
-from .project import load_project, project_dirs, save_json
+import numpy as np
 
+from .config import (
+    DEFAULT_COVER_SEC,
+    DEFAULT_HEAD_PAD_SEC,
+    DEFAULT_MAX_TRUE_PEAK_DB,
+    DEFAULT_SENTENCE_GAP_SEC,
+    DEFAULT_SENTENCE_RMS_DB,
+    DEFAULT_SPEED,
+    DEFAULT_TAIL_PAD_SEC,
+    DEFAULT_TAKES_PER_SENTENCE,
+    ffmpeg_bin,
+    whisper_cli_bin,
+    whisper_model_path,
+)
+from .project import load_json, load_project, project_dirs, save_json, sha256_file
 
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+__all__ = ["sha256_file"]
 
 
 def wav_info(path: Path) -> dict[str, Any]:
@@ -146,6 +156,29 @@ def slice_wav(source: Path, target: Path, duration_sec: float, sample_rate: int 
     return target
 
 
+def cover_lead_in_sec(manifest: dict[str, Any], fps: int = 30) -> float:
+    """封面时长（整帧）。封面期间不出人声和字幕，所有章节整体后移。"""
+    cover = manifest.get("cover") or {}
+    if not cover.get("enabled"):
+        return 0.0
+    sec = float(cover.get("durationSec", DEFAULT_COVER_SEC))
+    if sec <= 0:
+        return 0.0
+    return round(round(sec * fps) / fps, 4)
+
+
+def _write_silence(path: Path, seconds: float, sample_rate: int) -> Path:
+    subprocess.run(
+        [
+            ffmpeg_bin(), "-nostdin", "-v", "error", "-y",
+            "-f", "lavfi", "-i", f"anullsrc=r={sample_rate}:cl=mono",
+            "-t", f"{seconds:.4f}", "-c:a", "pcm_s16le", str(path),
+        ],
+        check=True,
+    )
+    return path
+
+
 def build_audio_timeline(
     project_ref: str | Path,
     *,
@@ -155,11 +188,15 @@ def build_audio_timeline(
     project_dir, manifest = load_project(project_ref)
     dirs = project_dirs(project_dir)
     sample_rate = int((manifest.get("voice") or {}).get("sampleRate", 24000))
+    lead_in = cover_lead_in_sec(manifest)
 
     timeline: list[dict[str, Any]] = []
     audio_manifest: list[dict[str, Any]] = []
     concat_parts: list[Path] = []
     cursor = 0.0
+    if lead_in > 0:
+        concat_parts.append(_write_silence(dirs["narration"] / "_leadin.wav", lead_in, sample_rate))
+        cursor = lead_in
 
     gap_wav = dirs["narration"] / "_gap.wav"
     if chapter_gap_sec > 0:
@@ -263,6 +300,7 @@ def build_audio_timeline(
 
     result = {
         "sampleRate": sample_rate,
+        "leadInSec": lead_in,
         "chapterGapSec": chapter_gap_sec,
         "totalDuration": wav_info(master_wav)["duration"],
         "masterDryWav": str(master_wav.relative_to(project_dir)),
@@ -274,30 +312,610 @@ def build_audio_timeline(
     return result
 
 
+
+
+# --------------------------------------------------------------------------
+# 逐句配音：每句生成多条，去头尾静音、按有声段均方根对齐音量，用 ASR 回读择优。
+# --------------------------------------------------------------------------
+
+SENTENCE_RE = re.compile(r".+?(?:[。！？!?]+[”’」』）)\"']*|$)", re.S)
+H3_FPS = 24
+
+
+def split_sentences(text: str) -> list[str]:
+    """按 。！？ 切句（引号、括号跟在句末标点后面一起归到上一句）。"""
+    out: list[str] = []
+    for m in SENTENCE_RE.finditer((text or "").strip()):
+        seg = m.group(0).strip()
+        if seg:
+            out.append(seg)
+    return out
+
+
+def pair_sentences(chapter: dict[str, Any]) -> list[dict[str, Any]]:
+    cid = chapter.get("id", "?")
+    narration = chapter.get("narration", "")
+    narr = split_sentences(narration)
+    tts = split_sentences(chapter.get("ttsText") or narration)
+    if len(narr) != len(tts):
+        raise ValueError(
+            f"第 {cid} 章 narration 切出 {len(narr)} 句，ttsText 切出 {len(tts)} 句。"
+            "两边要按 。！？ 一一对应，逐句配音才能和字幕对上。"
+        )
+    return [{"index": i + 1, "text": a, "tts": b} for i, (a, b) in enumerate(zip(narr, tts))]
+
+
+def load_mono(path: Path, sample_rate: int) -> np.ndarray:
+    """读成 float32 单声道；采样率或位深不对时先用 ffmpeg 转。"""
+    with wave.open(str(path), "rb") as w:
+        ok = w.getframerate() == sample_rate and w.getsampwidth() == 2 and w.getnchannels() == 1
+        raw = w.readframes(w.getnframes()) if ok else b""
+    if not ok:
+        conv = path.with_suffix(".conv.wav")
+        normalize_wav(path, conv, sample_rate=sample_rate)
+        with wave.open(str(conv), "rb") as w:
+            raw = w.readframes(w.getnframes())
+        conv.unlink(missing_ok=True)
+    return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+
+
+def load_int16(path: Path) -> np.ndarray:
+    with wave.open(str(path), "rb") as w:
+        if w.getsampwidth() != 2 or w.getnchannels() != 1:
+            raise ValueError(f"需要 16 bit 单声道 WAV: {path}")
+        return np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").copy()
+
+
+def write_int16(path: Path, samples: np.ndarray, sample_rate: int) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp.wav")
+    with wave.open(str(tmp), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes(samples.astype("<i2").tobytes())
+    tmp.replace(path)
+    return path
+
+
+def write_float(path: Path, samples: np.ndarray, sample_rate: int) -> Path:
+    pcm = np.clip(np.round(samples * 32767.0), -32768, 32767).astype("<i2")
+    return write_int16(path, pcm, sample_rate)
+
+
+def _frame_db(x: np.ndarray, hop: int) -> np.ndarray:
+    n = len(x) // hop
+    if n == 0:
+        return np.array([-120.0])
+    frames = x[: n * hop].reshape(n, hop).astype(np.float64)
+    return 20.0 * np.log10(np.sqrt(np.mean(frames ** 2, axis=1)) + 1e-9)
+
+
+def trim_silence(x: np.ndarray, sample_rate: int, *, threshold_db: float = -45.0, keep_sec: float = 0.04) -> np.ndarray:
+    """去掉头尾低于阈值的静音，两头各留 keep_sec，避免切掉轻辅音。"""
+    hop = max(1, int(sample_rate * 0.01))
+    db = _frame_db(x, hop)
+    loud = np.where(db > threshold_db)[0]
+    if len(loud) == 0:
+        return x
+    keep = int(round(keep_sec * sample_rate))
+    a = max(0, int(loud[0]) * hop - keep)
+    b = min(len(x), (int(loud[-1]) + 1) * hop + keep)
+    return x[a:b]
+
+
+def voiced_rms_db(x: np.ndarray, sample_rate: int) -> float:
+    """有声段均方根：只统计比最响帧低 30 dB 以内、且高于 -50 dBFS 的 20 ms 帧。"""
+    hop = max(1, int(sample_rate * 0.02))
+    n = len(x) // hop
+    if n == 0:
+        return -120.0
+    frames = x[: n * hop].reshape(n, hop).astype(np.float64)
+    power = np.mean(frames ** 2, axis=1)
+    db = 10.0 * np.log10(power + 1e-12)
+    voiced = power[db > max(-50.0, float(db.max()) - 30.0)]
+    if len(voiced) == 0:
+        return -120.0
+    return float(10.0 * np.log10(np.mean(voiced) + 1e-12))
+
+
+def _alimiter(x: np.ndarray, sample_rate: int, limit: float) -> np.ndarray:
+    proc = subprocess.run(
+        [
+            ffmpeg_bin(), "-nostdin", "-v", "error",
+            "-f", "f32le", "-ar", str(sample_rate), "-ac", "1", "-i", "pipe:0",
+            "-af", f"alimiter=limit={max(0.0625, min(1.0, limit)):.5f}:attack=5:release=50:level=0:latency=1",
+            "-f", "f32le", "pipe:1",
+        ],
+        input=x.astype("<f4").tobytes(),
+        capture_output=True,
+        check=True,
+    )
+    y = np.frombuffer(proc.stdout, dtype="<f4").astype(np.float32)
+    if len(y) >= len(x):
+        return y[: len(x)]
+    return np.concatenate([y, np.zeros(len(x) - len(y), dtype=np.float32)])
+
+
+def level_sentence(
+    x: np.ndarray,
+    sample_rate: int,
+    *,
+    target_db: float = DEFAULT_SENTENCE_RMS_DB,
+    peak_db: float = DEFAULT_MAX_TRUE_PEAK_DB,
+    iterations: int = 4,
+) -> np.ndarray:
+    """按有声段均方根对齐到固定目标，超峰再过 alimiter，循环几次直到两项都稳定。
+
+    目标是固定值而不是相邻句的平均值，所以重配一句不会改动其他句子的采样。
+    """
+    limit = 10.0 ** (peak_db / 20.0)
+    y = x.astype(np.float32)
+    for _ in range(iterations):
+        cur = voiced_rms_db(y, sample_rate)
+        if cur <= -119.0:
+            break
+        y = y * np.float32(10.0 ** ((target_db - cur) / 20.0))
+        if float(np.max(np.abs(y))) > limit:
+            y = _alimiter(y, sample_rate, limit)
+        if abs(voiced_rms_db(y, sample_rate) - target_db) < 0.3 and float(np.max(np.abs(y))) <= limit * 1.001:
+            break
+    return np.clip(y, -limit, limit)
+
+
+def _sentence_key(voice_id: str, speed: float, tts_text: str, sample_rate: int) -> str:
+    raw = f"{voice_id}|{speed:.3f}|{sample_rate}|{tts_text}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def transcribe_wavs(wavs: list[Path], *, language: str = "zh", prompt: str = "以下是普通话的句子。") -> dict[str, Any] | None:
+    """用本地 whisper.cpp 批量回读。没装 whisper-cli 或模型时返回 None（调用方必须如实报告）。"""
+    cli = whisper_cli_bin()
+    model = whisper_model_path()
+    if not cli or not model:
+        return None
+    results: dict[str, Any] = {}
+    for i in range(0, len(wavs), 24):
+        batch = wavs[i : i + 24]
+        converted: list[Path] = []
+        for w in batch:
+            c = w.with_suffix(".asr16k.wav")
+            subprocess.run(
+                [ffmpeg_bin(), "-nostdin", "-v", "error", "-y", "-i", str(w), "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(c)],
+                check=True,
+            )
+            converted.append(c)
+        cmd = [cli, "-m", str(model), "-l", language, "-ojf", "-np", "--prompt", prompt]
+        for c in converted:
+            cmd += ["-f", str(c)]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for w, c in zip(batch, converted):
+            out = Path(str(c) + ".json")
+            if out.is_file():
+                results[str(w)] = load_json(out).get("transcription") or []
+                out.unlink(missing_ok=True)
+            c.unlink(missing_ok=True)
+    return results
+
+
+def transcription_text(transcription: list[dict[str, Any]]) -> str:
+    return "".join(str(seg.get("text", "")) for seg in transcription).strip()
+
+
+def asr_similarity(asr_text: str, *refs: str) -> float:
+    from .subtitles import normalize_text
+
+    a = normalize_text(asr_text)
+    best = 0.0
+    for ref in refs:
+        b = normalize_text(ref)
+        if a and b:
+            best = max(best, difflib.SequenceMatcher(None, a, b, autojunk=False).ratio())
+    return round(best, 4)
+
+
+def choose_take(takes: list[dict[str, Any]], *, margin: float = 0.03) -> int:
+    """回读最干净的几条里挑最短的一条；没有 ASR 时只能挑最短。"""
+    scored = [t for t in takes if t.get("asrScore") is not None]
+    if not scored:
+        return int(min(takes, key=lambda t: t["durationSec"])["take"])
+    best = max(float(t["asrScore"]) for t in scored)
+    near = [t for t in scored if float(t["asrScore"]) >= best - margin]
+    return int(min(near, key=lambda t: t["durationSec"])["take"])
+
+
+def _shift_transcription(transcription: list[dict[str, Any]], offset_ms: int) -> list[dict[str, Any]]:
+    shifted: list[dict[str, Any]] = []
+    for seg in transcription:
+        seg2 = dict(seg)
+        if isinstance(seg.get("offsets"), dict):
+            seg2["offsets"] = {k: int(v) + offset_ms for k, v in seg["offsets"].items()}
+        toks = []
+        for tok in seg.get("tokens") or []:
+            tok2 = dict(tok)
+            if isinstance(tok.get("offsets"), dict):
+                tok2["offsets"] = {k: int(v) + offset_ms for k, v in tok["offsets"].items()}
+            tok2.pop("timestamps", None)
+            toks.append(tok2)
+        seg2["tokens"] = toks
+        seg2.pop("timestamps", None)
+        shifted.append(seg2)
+    return shifted
+
+
+def h3_output_sec(requested_sec: float) -> float:
+    """H3 输出帧数只有 17k+5 档（24 fps），按请求帧数就近取整。"""
+    frames = requested_sec * H3_FPS
+    k = max(0, round((frames - 5) / 17))
+    return (17 * k + 5) / H3_FPS
+
+
+def suggest_on_camera(
+    sentences: list[dict[str, Any]],
+    *,
+    tail_pad_sec: float = DEFAULT_TAIL_PAD_SEC,
+    min_sec: float = 5.0,
+    max_sec: float = 10.0,
+) -> dict[str, Any]:
+    """给出出镜取前 N 句时的 onCameraSec：切点落在句间停顿里，并保证 H3 取整后不截断人声。"""
+    options: list[dict[str, Any]] = []
+    for n in range(1, len(sentences) + 1):
+        end = float(sentences[n - 1]["endSec"])
+        if end > max_sec + 0.5:
+            break
+        nxt = float(sentences[n]["startSec"]) if n < len(sentences) else end + tail_pad_sec
+        lo, hi = end + 0.08, min(nxt - 0.03, end + 0.45)
+        picks = []
+        s = lo
+        while s <= hi + 1e-9:
+            out = h3_output_sec(s)
+            if out >= end + 0.05:
+                picks.append((0 if out >= s - 1e-9 else 1, abs(out - s), round(s, 2), out))
+            s += 0.01
+        if not picks:
+            options.append({"sentences": n, "speechEndSec": round(end, 3), "ok": False,
+                            "reason": "句间停顿里找不到 H3 取整后不截断人声的切点"})
+            continue
+        picks.sort()
+        _, _, s, out = picks[0]
+        options.append({
+            "sentences": n,
+            "speechEndSec": round(end, 3),
+            "onCameraSec": s,
+            "h3OutputSec": round(out, 3),
+            "firstCutAtSec": round(min(s, out), 2),
+            "ok": True,
+        })
+    good = [o for o in options if o["ok"] and o["speechEndSec"] <= max_sec]
+    in_range = [o for o in good if o["speechEndSec"] >= min_sec]
+    rec = (in_range or good or [None])[-1] if (in_range or good) else None
+    return {"options": options, "recommended": rec}
+
+
+def dub_chapter_by_sentence(
+    project_dir: Path,
+    manifest: dict[str, Any],
+    chapter: dict[str, Any],
+    *,
+    force: bool = False,
+    reroll: set[int] | None = None,
+    takes: int | None = None,
+) -> dict[str, Any]:
+    """逐句配一章：文字没变的句子沿用上次选中的那条，变了的（或指定重摇的）每句重新生成多条择优。"""
+    dirs = project_dirs(project_dir)
+    voice = manifest["voice"]
+    cid = chapter["id"]
+    sr = int(voice.get("sampleRate", 24000))
+    speed = float(voice.get("speed", DEFAULT_SPEED))
+    voice_id = str(voice["voiceId"])
+    n_takes = max(1, int(takes or voice.get("takesPerSentence", DEFAULT_TAKES_PER_SENTENCE)))
+    gap = float(voice.get("sentenceGapSec", DEFAULT_SENTENCE_GAP_SEC))
+    head = float(voice.get("headPadSec", DEFAULT_HEAD_PAD_SEC))
+    tail = float(voice.get("tailPadSec", DEFAULT_TAIL_PAD_SEC))
+    target_rms = float(voice.get("sentenceRmsDb", DEFAULT_SENTENCE_RMS_DB))
+    reroll = set(reroll or ())
+
+    pairs = pair_sentences(chapter)
+    sent_dir = dirs["narration"] / "sentences" / cid
+    sent_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = dirs["narration"] / f"{cid}.sentences.json"
+    old = load_json(manifest_path) if manifest_path.is_file() else None
+    old_sentences = (old or {}).get("sentences", [])
+    pool: dict[str, list[dict[str, Any]]] = {}
+    if old and not force:
+        for s in old_sentences:
+            pool.setdefault(s["key"], []).append(s)
+    max_roll: dict[str, int] = {}
+    for s in old_sentences:
+        max_roll[s["key"]] = max(max_roll.get(s["key"], 0), int(s.get("roll", 1)))
+
+    entries: list[dict[str, Any] | None] = []
+    pending: list[tuple[int, dict[str, Any], str, int]] = []
+    reused: list[int] = []
+    for pair in pairs:
+        key = _sentence_key(voice_id, speed, pair["tts"], sr)
+        prev = None
+        if pair["index"] not in reroll and pool.get(key):
+            prev = pool[key].pop(0)
+            if not (project_dir / prev["wav"]).is_file():
+                prev = None
+        if prev is not None:
+            e = dict(prev)
+            e.update({"index": pair["index"], "text": pair["text"], "tts": pair["tts"]})
+            entries.append(e)
+            reused.append(pair["index"])
+        else:
+            roll = max_roll.get(key, 0) + 1
+            max_roll[key] = roll
+            entries.append(None)
+            pending.append((len(entries) - 1, pair, key, roll))
+
+    generated_takes: list[list[dict[str, Any]]] = []
+    for _slot, pair, key, roll in pending:
+        infos = []
+        for k in range(1, n_takes + 1):
+            raw = sent_dir / f"{key}-r{roll}-t{k}.raw.wav"
+            final = sent_dir / f"{key}-r{roll}-t{k}.wav"
+            synthesize_wav(
+                endpoint=voice["endpoint"], voice_id=voice_id, text=pair["tts"], speed=speed, output=raw,
+            )
+            x = trim_silence(load_mono(raw, sr), sr)
+            x = level_sentence(x, sr, target_db=target_rms)
+            write_float(final, x, sr)
+            infos.append({"take": k, "wav": str(final.relative_to(project_dir)), "durationSec": round(len(x) / sr, 4)})
+        generated_takes.append(infos)
+
+    new_wavs = [project_dir / t["wav"] for infos in generated_takes for t in infos]
+    asr = transcribe_wavs(new_wavs) if new_wavs else {}
+    asr_available = asr is not None
+    generated: list[int] = []
+    for (slot, pair, key, roll), infos in zip(pending, generated_takes):
+        trs: dict[int, Any] = {}
+        for t in infos:
+            tr = (asr or {}).get(str(project_dir / t["wav"]))
+            if tr is None:
+                t["asrText"], t["asrScore"] = None, None
+            else:
+                t["asrText"] = transcription_text(tr)
+                t["asrScore"] = asr_similarity(t["asrText"], pair["text"], pair["tts"])
+                trs[t["take"]] = tr
+        chosen = choose_take(infos)
+        ct = next(t for t in infos if t["take"] == chosen)
+        entries[slot] = {
+            "index": pair["index"],
+            "text": pair["text"],
+            "tts": pair["tts"],
+            "key": key,
+            "roll": roll,
+            "takes": infos,
+            "chosenTake": chosen,
+            "wav": ct["wav"],
+            "durationSec": ct["durationSec"],
+            "asrText": ct["asrText"],
+            "asrScore": ct["asrScore"],
+            "asrTranscription": trs.get(chosen),
+        }
+        generated.append(pair["index"])
+
+    head_n, gap_n, tail_n = (int(round(v * sr)) for v in (head, gap, tail))
+    parts: list[np.ndarray] = [np.zeros(head_n, dtype="<i2")]
+    cursor = head_n
+    final_entries: list[dict[str, Any]] = [e for e in entries if e is not None]
+    for i, e in enumerate(final_entries):
+        pcm = load_int16(project_dir / e["wav"])
+        e["startSec"] = round(cursor / sr, 4)
+        cursor += len(pcm)
+        e["endSec"] = round(cursor / sr, 4)
+        e["sha256"] = sha256_file(project_dir / e["wav"])
+        parts.append(pcm)
+        if i + 1 < len(final_entries):
+            parts.append(np.zeros(gap_n, dtype="<i2"))
+            cursor += gap_n
+    parts.append(np.zeros(tail_n, dtype="<i2"))
+    chapter_wav = dirs["narration"] / f"{cid}.wav"
+    write_int16(chapter_wav, np.concatenate(parts), sr)
+
+    transcription: list[dict[str, Any]] = []
+    for e in final_entries:
+        if e.get("asrTranscription"):
+            transcription += _shift_transcription(e["asrTranscription"], int(round(e["startSec"] * 1000)))
+    if transcription:
+        save_json(dirs["asr"] / f"{cid}.json", {"source": "video-studio sentence ASR (whisper.cpp)", "transcription": transcription})
+
+    save_json(manifest_path, {
+        "chapterId": cid,
+        "voiceId": voice_id,
+        "speed": speed,
+        "sampleRate": sr,
+        "headPadSec": head,
+        "sentenceGapSec": gap,
+        "tailPadSec": tail,
+        "sentenceRmsDb": target_rms,
+        "durationSec": round(cursor / sr + tail, 4),
+        "sentences": final_entries,
+    })
+
+    on_cam = suggest_on_camera(final_entries, tail_pad_sec=tail)
+    applied = None
+    want = chapter.get("onCameraSentences")
+    if want:
+        opt = next((o for o in on_cam["options"] if o["sentences"] == int(want) and o["ok"]), None)
+        if opt:
+            applied = opt
+    low = [
+        {"index": e["index"], "asrScore": e["asrScore"], "text": e["text"], "asr": e["asrText"]}
+        for e in final_entries
+        if e.get("asrScore") is not None and float(e["asrScore"]) < 0.85
+    ]
+    return {
+        "id": cid,
+        "mode": "sentence",
+        "sentences": len(final_entries),
+        "generated": generated,
+        "reused": reused,
+        "takesPerSentence": n_takes,
+        "asrAvailable": asr_available if new_wavs else None,
+        "lowAsrSentences": low,
+        "boundaries": [
+            {"index": e["index"], "startSec": e["startSec"], "endSec": e["endSec"], "asrScore": e.get("asrScore"), "text": e["text"]}
+            for e in final_entries
+        ],
+        "onCamera": on_cam,
+        "onCameraApplied": applied,
+    }
+
+
 def run_tts(
     project_ref: str | Path,
     *,
     chapter_ids: list[str] | None = None,
     force: bool = False,
     chapter_gap_sec: float = 0.35,
+    reroll: dict[str, set[int]] | None = None,
+    takes: int | None = None,
 ) -> dict[str, Any]:
+    """生成干声。默认逐句配音；voice.dubbing = "chapter" 时退回整章一次生成的旧做法。"""
     project_dir, manifest = load_project(project_ref)
     dirs = project_dirs(project_dir)
     voice = manifest["voice"]
+    mode = voice.get("dubbing", "sentence")
     selected = set(chapter_ids) if chapter_ids else None
+    reports: list[dict[str, Any]] = []
+    project_changed = False
 
     for ch in manifest["chapters"]:
         cid = ch["id"]
         if selected and cid not in selected:
             continue
         target = dirs["narration"] / f"{cid}.wav"
-        if target.is_file() and not force:
+        if mode == "chapter":
+            if target.is_file() and not force:
+                reports.append({"id": cid, "mode": "chapter", "skipped": True})
+                continue
+            synthesize_wav(
+                endpoint=voice["endpoint"],
+                voice_id=voice["voiceId"],
+                text=ch.get("ttsText") or ch["narration"],
+                speed=float(voice.get("speed", DEFAULT_SPEED)),
+                output=target,
+            )
+            reports.append({"id": cid, "mode": "chapter"})
             continue
-        synthesize_wav(
-            endpoint=voice["endpoint"],
-            voice_id=voice["voiceId"],
-            text=ch.get("ttsText") or ch["narration"],
-            speed=float(voice.get("speed", 1.2)),
-            output=target,
+        if target.is_file() and not (dirs["narration"] / f"{cid}.sentences.json").is_file() and not force:
+            reports.append({
+                "id": cid,
+                "mode": "legacy-chapter",
+                "skipped": True,
+                "note": "这一章是旧的整章配音，没有动。要改成逐句配音，加 --force 重配。",
+            })
+            continue
+        rep = dub_chapter_by_sentence(
+            project_dir, manifest, ch, force=force, reroll=(reroll or {}).get(cid), takes=takes,
         )
-    return build_audio_timeline(project_dir, chapter_gap_sec=chapter_gap_sec)
+        if rep.get("onCameraApplied") and float(ch.get("onCameraSec") or 0) != rep["onCameraApplied"]["onCameraSec"]:
+            ch["onCameraSec"] = rep["onCameraApplied"]["onCameraSec"]
+            project_changed = True
+        reports.append(rep)
+
+    if project_changed:
+        save_json(project_dir / "project.json", manifest)
+    timeline = build_audio_timeline(project_dir, chapter_gap_sec=chapter_gap_sec)
+    return {"chapters": reports, "timeline": timeline}
+
+
+def redub(
+    project_ref: str | Path,
+    *,
+    chapter_id: str,
+    sentences: list[int] | None = None,
+    takes: int | None = None,
+) -> dict[str, Any]:
+    """局部重配：只重配改过字的句子（或 --sentence 指定的句子），其余句子的采样原样沿用。
+
+    报告哪些章的出镜段音频没变（已验收的 H3 可以直接沿用），哪些变了（必须重新生成 H3）。
+    """
+    project_dir, manifest = load_project(project_ref)
+    dirs = project_dirs(project_dir)
+    ch = next((c for c in manifest["chapters"] if c["id"] == chapter_id), None)
+    if ch is None:
+        raise KeyError(f"项目里没有第 {chapter_id} 章")
+    sent_path = dirs["narration"] / f"{chapter_id}.sentences.json"
+    if not sent_path.is_file():
+        raise FileNotFoundError(
+            f"第 {chapter_id} 章没有逐句配音记录（{sent_path.name}），不能局部重配。"
+            f"先用 tts --chapters {chapter_id} --force 逐句配一遍。"
+        )
+    old_sent = load_json(sent_path)
+    tl_path = project_dir / "work" / "timeline.json"
+    old_tl = load_json(tl_path) if tl_path.is_file() else None
+    gap = float(old_tl.get("chapterGapSec", 0.35)) if old_tl else 0.35
+    old_files = {f["id"]: f for f in (old_tl or {}).get("files", [])}
+    old_by_index = {s["index"]: s for s in old_sent["sentences"]}
+
+    res = run_tts(
+        project_dir,
+        chapter_ids=[chapter_id],
+        chapter_gap_sec=gap,
+        reroll={chapter_id: set(sentences or [])},
+        takes=takes,
+    )
+    rep = res["chapters"][0]
+    new_sent = load_json(sent_path)
+    new_files = {f["id"]: f for f in res["timeline"]["files"]}
+
+    changed = []
+    for e in new_sent["sentences"]:
+        if e["index"] not in rep["generated"]:
+            continue
+        before = old_by_index.get(e["index"])
+        changed.append({
+            "index": e["index"],
+            "before": before["text"] if before else None,
+            "after": e["text"],
+            "beforeDurationSec": before["durationSec"] if before else None,
+            "afterDurationSec": e["durationSec"],
+            "startSec": e["startSec"],
+            "asrScore": e.get("asrScore"),
+            "chosenTake": e["chosenTake"],
+        })
+
+    host_impact = []
+    for cid, nf in new_files.items():
+        if not nf.get("onCameraSha256"):
+            continue
+        of = old_files.get(cid)
+        same = bool(of) and of.get("onCameraSha256") == nf["onCameraSha256"]
+        host_impact.append({
+            "chapterId": cid,
+            "onCameraAudioUnchanged": same,
+            "onCameraSha256": nf["onCameraSha256"],
+            "next": "沿用已验收的 H3 片段" if same else "出镜段音频变了：重新 h3-prepare → h3-submit → sync-gate",
+        })
+
+    first_start = min((c["startSec"] for c in changed), default=None)
+    stale_cuts = []
+    if first_start is not None:
+        for k, cut in enumerate(ch.get("cuts") or []):
+            at = cut.get("at")
+            if "atSentence" in cut or not isinstance(at, (int, float)):
+                continue
+            if float(at) >= first_start - 1e-6 and k > 0:
+                stale_cuts.append({"cutIndex": k, "at": at, "source": cut.get("source")})
+
+    return {
+        "chapterId": chapter_id,
+        "changedSentences": changed,
+        "reusedSentences": rep["reused"],
+        "chapterDurationBeforeSec": old_sent.get("durationSec"),
+        "chapterDurationAfterSec": new_sent.get("durationSec"),
+        "asrAvailable": rep.get("asrAvailable"),
+        "lowAsrSentences": rep.get("lowAsrSentences"),
+        "hostSegments": host_impact,
+        "cutsWithFixedSeconds": stale_cuts,
+        "note": (
+            "固定秒数的切点不会跟着句子时长移动，建议改成 atSentence。"
+            if stale_cuts else "切点都会跟着句子走。"
+        ),
+        "nextSteps": ["subtitles", "compose", "qc --windows work/host-windows.json"],
+        "timeline": res["timeline"],
+    }

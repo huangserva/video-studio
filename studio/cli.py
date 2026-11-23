@@ -13,6 +13,9 @@ from .compliance import check_project_compliance, list_industries, list_use_case
 from .compose import compose_project, swap_hosts
 from .config import (
     DATA_DIR,
+    DEFAULT_LUFS_TOLERANCE,
+    DEFAULT_MAX_TRUE_PEAK_DB,
+    DEFAULT_TARGET_LUFS,
     PROJECTS_DIR,
     TOOLS_DIR,
     ffmpeg_bin,
@@ -20,13 +23,15 @@ from .config import (
     handcheck_bin,
     syncnet_model_path,
     vision_python,
+    whisper_cli_bin,
+    whisper_model_path,
 )
 from .h3 import collect_h3, prepare_h3_graphs, submit_h3
 from .project import init_project, load_project
 from .qc import run_final_qc
 from .subtitles import generate_subtitles
 from .sync_gate import review_clip, review_project_clip
-from .tts import build_audio_timeline, run_tts
+from .tts import build_audio_timeline, redub, run_tts
 
 
 def _emit(payload: object) -> None:
@@ -51,6 +56,11 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         "visionStackDetail": (torch_check.stdout or torch_check.stderr).strip(),
         "syncnetModel": {"path": str(model), "exists": model.is_file()},
         "handcheck": {"path": str(hc), "exists": hc.is_file()},
+        "whisper": {
+            "cli": whisper_cli_bin(),
+            "model": str(whisper_model_path()) if whisper_model_path() else None,
+            "note": "逐句配音靠它回读择优；缺了只能按时长挑，字幕也会退回按字数比例对齐。",
+        },
         "tools": {
             "measureFidelityV2": (TOOLS_DIR / "measure-fidelity-v2.mjs").is_file(),
             "fillSlots": (TOOLS_DIR / "fill-slots.mjs").is_file(),
@@ -114,7 +124,14 @@ def cmd_tts(args: argparse.Namespace) -> int:
             chapter_ids=args.chapters or None,
             force=args.force,
             chapter_gap_sec=args.gap,
+            takes=args.takes,
         )
+    _emit(res)
+    return 0
+
+
+def cmd_redub(args: argparse.Namespace) -> int:
+    res = redub(args.project, chapter_id=args.chapter, sentences=args.sentence or None, takes=args.takes)
     _emit(res)
     return 0
 
@@ -203,6 +220,9 @@ def cmd_qc(args: argparse.Namespace) -> int:
         expected_height=args.height,
         expected_fps=args.fps,
         max_sync_abs_ms=args.max_sync_ms,
+        target_lufs=None if args.no_loudness_gate else args.target_lufs,
+        lufs_tolerance=args.lufs_tolerance,
+        max_true_peak_db=args.max_true_peak,
     )
     _emit(res)
     return 0 if res["passed"] else 1
@@ -235,13 +255,21 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("project", help="项目目录或 project.json 路径")
     p.set_defaults(func=cmd_check)
 
-    p = sub.add_parser("tts", help="调用 CosyVoice3 生成干声，或仅汇总已有分章干声时间轴")
+    p = sub.add_parser("tts", help="逐句调用 CosyVoice3 生成干声（每句多条择优），或仅汇总已有分章干声时间轴")
     p.add_argument("project")
     p.add_argument("--chapters", nargs="*", help="仅生成指定章节 ID")
-    p.add_argument("--force", action="store_true", help="覆盖已有 WAV")
+    p.add_argument("--force", action="store_true", help="整章重配（不沿用已有句子）")
+    p.add_argument("--takes", type=int, help="每句生成几条（默认取 voice.takesPerSentence，3）")
     p.add_argument("--build-only", action="store_true", help="不调 TTS，直接汇总已有干声并切分出镜段")
     p.add_argument("--gap", type=float, default=0.35, help="章间停顿秒数")
     p.set_defaults(func=cmd_tts)
+
+    p = sub.add_parser("redub", help="局部重配：只重配改过字或指定的句子，并报告 H3 出镜段是否还能沿用")
+    p.add_argument("project")
+    p.add_argument("--chapter", required=True, help="章节 ID")
+    p.add_argument("--sentence", type=int, nargs="*", help="文字没改也要重摇的句子序号（从 1 开始）")
+    p.add_argument("--takes", type=int, help="每句生成几条")
+    p.set_defaults(func=cmd_redub)
 
     p = sub.add_parser("subtitles", help="生成与干声时间轴对齐的 ASS 字幕")
     p.add_argument("project")
@@ -291,7 +319,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fps", type=int, default=30)
     p.set_defaults(func=cmd_swap_hosts)
 
-    p = sub.add_parser("qc", help="成片终检：规格 + 响度 + 12 帧抽检图 + 成片人物小窗 SyncNet 复测")
+    p = sub.add_parser("qc", help="成片终检：规格 + 响度/真峰值 + 12 帧抽检图 + 成片人物小窗 SyncNet 复测")
     p.add_argument("video", help="最终成片 MP4")
     p.add_argument("--windows", help="host-windows.json，用于裁出成片人物小窗复测 SyncNet")
     p.add_argument("--base-audio", help="可选：比对音轨 SHA-256 的底片路径")
@@ -300,6 +328,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--height", type=int, default=1080)
     p.add_argument("--fps", type=float, default=30.0)
     p.add_argument("--max-sync-ms", type=int, default=40)
+    p.add_argument("--target-lufs", type=float, default=DEFAULT_TARGET_LUFS, help="整体响度目标（默认 -14.5）")
+    p.add_argument("--lufs-tolerance", type=float, default=DEFAULT_LUFS_TOLERANCE, help="允许偏差 LU（默认 0.5）")
+    p.add_argument("--max-true-peak", type=float, default=DEFAULT_MAX_TRUE_PEAK_DB, help="真峰值上限 dBTP（默认 -1）")
+    p.add_argument("--no-loudness-gate", action="store_true", help="只测响度不判定（复查旧片用）")
     p.set_defaults(func=cmd_qc)
 
     return ap
