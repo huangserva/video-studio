@@ -19,6 +19,18 @@ DEFAULT_TTS_ENDPOINT = os.environ.get("VIDEO_STUDIO_TTS_ENDPOINT", "http://127.0
 DEFAULT_H3_ENDPOINT = os.environ.get("VIDEO_STUDIO_H3_ENDPOINT", "http://127.0.0.1:8190")
 DEFAULT_QWEN_EDIT_ENDPOINT = os.environ.get("VIDEO_STUDIO_QWEN_EDIT_ENDPOINT", "http://127.0.0.1:8192")
 
+# 配音与响度默认值（2026-11 起按 MemT 传播版的做法）
+DEFAULT_SPEED = 1.3
+DEFAULT_TAKES_PER_SENTENCE = 3
+DEFAULT_SENTENCE_GAP_SEC = 0.30
+DEFAULT_HEAD_PAD_SEC = 0.12
+DEFAULT_TAIL_PAD_SEC = 0.25
+DEFAULT_SENTENCE_RMS_DB = -20.0
+DEFAULT_TARGET_LUFS = -14.5
+DEFAULT_LUFS_TOLERANCE = 0.5
+DEFAULT_MAX_TRUE_PEAK_DB = -1.0
+DEFAULT_COVER_SEC = 0.75
+
 
 def ffmpeg_bin() -> str:
     return os.environ.get("FFMPEG_BIN") or shutil.which("ffmpeg") or "ffmpeg"
@@ -33,6 +45,28 @@ def syncnet_model_path() -> Path:
     if env:
         return Path(env)
     return MODELS_DIR / "syncnet_v2.model"
+
+
+def whisper_cli_bin() -> str | None:
+    env = os.environ.get("VIDEO_STUDIO_WHISPER_CLI")
+    if env:
+        return env if Path(env).exists() else None
+    return shutil.which("whisper-cli")
+
+
+def whisper_model_path() -> Path | None:
+    """whisper.cpp 模型：环境变量优先，其次 models/ggml-small.bin。"""
+    candidates = []
+    if os.environ.get("VIDEO_STUDIO_WHISPER_MODEL"):
+        candidates.append(Path(os.environ["VIDEO_STUDIO_WHISPER_MODEL"]).expanduser())
+    candidates += [
+        MODELS_DIR / "ggml-small.bin",
+        Path.home() / ".cache" / "whisper.cpp" / "ggml-small.bin",
+    ]
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    return None
 
 
 def handcheck_bin() -> Path:

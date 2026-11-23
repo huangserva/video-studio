@@ -1,0 +1,66 @@
+{
+  "description": "CosyVoice3 念法坑：ttsText（以及 onCameraText）里出现 pattern 时，check 会提醒换成 say 的写法。字幕 narration 照常写正确品牌名，只改喂给配音的文本。pattern 是正则。",
+  "entries": [
+    {
+      "pattern": "MemT",
+      "say": "Mem T",
+      "note": "直接写 MemT 会把 T 吞掉",
+      "source": "sponsored-explainer MemT 传播版 v4.1"
+    },
+    {
+      "pattern": "MemOS",
+      "say": "Mem O S",
+      "note": "会被念成 memo、mmox",
+      "source": "sponsored-explainer MemT 传播版 v5.1"
+    },
+    {
+      "pattern": "背进模型(?!里)",
+      "say": "背进模型里",
+      "note": "「背进模型」3 次都被听成「背景模型」",
+      "source": "sponsored-explainer MemT 传播版"
+    },
+    {
+      "pattern": "(?:^|[。！？，、；])板子",
+      "say": "这块板子",
+      "note": "句首单独的「板子」容易被听成「胆子」",
+      "source": "sponsored-explainer MemT 传播版"
+    },
+    {
+      "pattern": "Nemotron",
+      "say": "Nemotron",
+      "note": "怎么写都念不准，能用就别重配；交付时提醒人工听这一句",
+      "source": "sponsored-explainer MemT 传播版",
+      "level": "listen"
+    },
+    {
+      "pattern": "video-studio",
+      "say": "video studio",
+      "note": "连字符会被吞掉或念出来",
+      "source": "vs-open-source 2026-11-23"
+    },
+    {
+      "pattern": "CosyVoice",
+      "say": "Cosy Voice",
+      "note": "连写容易念糊",
+      "source": "vs-open-source 2026-11-23"
+    },
+    {
+      "pattern": "(?<![A-Za-z])H3(?![0-9])",
+      "say": "H 三",
+      "note": "数字要写成中文读法",
+      "source": "vs-open-source 2026-11-23"
+    },
+    {
+      "pattern": "1080[pP]",
+      "say": "一零八零 P",
+      "note": "逐位念",
+      "source": "vs-open-source 2026-11-23"
+    },
+    {
+      "pattern": "4090",
+      "say": "四零九零",
+      "note": "显卡型号逐位念",
+      "source": "vs-open-source 2026-11-23"
+    }
+  ]
+}

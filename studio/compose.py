@@ -10,7 +10,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .config import ffmpeg_bin
+from .config import DEFAULT_MAX_TRUE_PEAK_DB, DEFAULT_TARGET_LUFS, ffmpeg_bin
 from .project import load_json, load_project, load_style, project_dirs, save_json
 from .sync_gate import audio_stream_sha256, video_nframes
 
@@ -91,6 +91,128 @@ def render_shells(
         im.save(shells_dir / f"shell-{cid}-host.png")
 
 
+def _fit_image(im: Image.Image, w: int, h: int) -> Image.Image:
+    scale = max(w / im.width, h / im.height)
+    im = im.resize((max(w, round(im.width * scale)), max(h, round(im.height * scale))), Image.LANCZOS)
+    x = (im.width - w) // 2
+    y = (im.height - h) // 2
+    return im.crop((x, y, x + w, y + h))
+
+
+def _draw_ai_label(d: ImageDraw.ImageDraw, x: int, y: int, label: str, font: Any) -> None:
+    if not label:
+        return
+    l, t, r, b = d.textbbox((0, 0), label, font=font)
+    d.rounded_rectangle((x, y, x + (r - l) + 28, y + (b - t) + 18), radius=8, fill=(20, 20, 20))
+    d.text((x + 14 - l, y + 9 - t), label, fill=(255, 255, 255), font=font)
+
+
+def render_cover(
+    *,
+    project_dir: Path,
+    manifest: dict[str, Any],
+    style: dict[str, Any],
+    target: Path,
+) -> Path:
+    """封面：标题和副标题由我们自己排版叠字，不让生图模型写中文。
+
+    cover.image 有图就用图做底；没有就用样式底色 + 主讲人参考图。
+    """
+    w = int(style["canvas"]["width"])
+    h = int(style["canvas"]["height"])
+    c = style["colors"]
+    fonts = style["fonts"]
+    cover = manifest.get("cover") or {}
+    presenter = manifest.get("presenter") or {}
+    headline = str(cover.get("headline") or manifest.get("title", ""))
+    subline = str(cover.get("subline") or manifest.get("subtitle", ""))
+    ai_label = (presenter.get("aiLabel") or "").strip() if presenter.get("enabled") else ""
+    label_font = _load_font(fonts["sans"], 26)
+
+    image_rel = (cover.get("image") or "").strip()
+    if image_rel:
+        src = (project_dir / image_rel).resolve()
+        if not src.is_file():
+            raise FileNotFoundError(f"缺少封面底图: {src}")
+        im = _fit_image(Image.open(src).convert("RGB"), w, h)
+        shade = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shade)
+        for i in range(420):
+            sd.line((0, h - i, w, h - i), fill=(0, 0, 0, int(170 * (1 - i / 420))))
+        im = Image.alpha_composite(im.convert("RGBA"), shade).convert("RGB")
+        d = ImageDraw.Draw(im)
+        d.text((96, h - 300), headline, fill=(255, 255, 255), font=_load_font(fonts["serif"], 96))
+        if subline:
+            d.text((100, h - 170), subline, fill=(235, 235, 235), font=_load_font(fonts["sans"], 44))
+        _draw_ai_label(d, 40, 36, ai_label, label_font)
+    else:
+        im = Image.new("RGB", (w, h), c["background"])
+        d = ImageDraw.Draw(im)
+        d.line((88, 120, 1808, 120), fill=c["rule"], width=2)
+        hb = style["layouts"]["host"]["host"]
+        portrait_rel = presenter.get("portraitImage") or presenter.get("waistImage") or ""
+        portrait = (project_dir / portrait_rel) if portrait_rel else None
+        text_right = w - 120
+        if presenter.get("enabled") and portrait and portrait.is_file():
+            ph = _fit_image(Image.open(portrait).convert("RGB"), hb["w"], hb["h"])
+            im.paste(ph, (hb["x"], hb["y"]))
+            d.rectangle((hb["x"] - 3, hb["y"] - 3, hb["x"] + hb["w"] + 3, hb["y"] + hb["h"] + 3), outline=c["frame"], width=3)
+            _draw_ai_label(d, hb["x"] + 18, hb["y"] + 18, ai_label, label_font)
+            text_right = hb["x"] - 48
+        size = 104
+        font = _load_font(fonts["serif"], size)
+        while size > 56 and d.textlength(headline, font=font) > text_right - 96:
+            size -= 4
+            font = _load_font(fonts["serif"], size)
+        d.text((96, 400), headline, fill=c["ink"], font=font)
+        if subline:
+            sub_size = 44
+            sub_font = _load_font(fonts["sans"], sub_size)
+            while sub_size > 28 and d.textlength(subline, font=sub_font) > text_right - 100:
+                sub_size -= 2
+                sub_font = _load_font(fonts["sans"], sub_size)
+            d.text((100, 400 + size + 40), subline, fill=c["accent"], font=sub_font)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    im.save(target)
+    return target
+
+
+def _host_clip_sec(path: Path, host_fps: int = 24) -> float | None:
+    if not path.is_file():
+        return None
+    return video_nframes(path) / host_fps
+
+
+def resolve_cut_times(
+    chapter: dict[str, Any],
+    *,
+    sentences: list[dict[str, Any]] | None,
+    on_camera_sec: float,
+    host_clip_sec: float | None,
+    lead_sec: float = 0.10,
+) -> list[float]:
+    """切点三种写法：固定秒数 at；atSentence（第 N 句开口前 0.1 秒）；at = "onCameraEnd"（出镜段结尾，不超过 H3 实际时长）。"""
+    cid = chapter.get("id", "?")
+    times: list[float] = []
+    for k, cut in enumerate(chapter.get("cuts") or []):
+        if "atSentence" in cut:
+            if not sentences:
+                raise ValueError(f"第 {cid} 章第 {k + 1} 个切点用了 atSentence，但这一章没有逐句配音记录")
+            n = int(cut["atSentence"])
+            hit = next((s for s in sentences if int(s["index"]) == n), None)
+            if hit is None:
+                raise ValueError(f"第 {cid} 章没有第 {n} 句（atSentence={n}）")
+            t = max(0.0, float(hit["startSec"]) - lead_sec)
+        elif cut.get("at") == "onCameraEnd":
+            t = on_camera_sec
+            if host_clip_sec is not None:
+                t = min(t, host_clip_sec)
+        else:
+            t = float(cut.get("at", 0.0))
+        times.append(round(t, 4))
+    return times
+
+
 def _fit_filter(w: int, h: int) -> str:
     return f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h},setsar=1"
 
@@ -129,8 +251,44 @@ def compose_project(
     tl_entries = timeline["chapters"]
     ch_by_id = {c["id"]: c for c in manifest["chapters"]}
     total_dur = float(timeline["totalDuration"])
+    lead_in = float(timeline.get("leadInSec", 0.0))
+    files_by_id = {f["id"]: f for f in timeline.get("files", [])}
+
+    # 出镜干声和已验收 H3 的收据对不上，说明配音改过但 H3 没重做：直接拦下，不出假绿成片。
+    unverified_hosts: list[str] = []
+    for entry in tl_entries:
+        cid = entry["id"]
+        uses_host = any(c.get("layout") in ("split", "host") for c in (ch_by_id[cid].get("cuts") or []))
+        if not uses_host:
+            continue
+        receipt_path = dirs["h3_accepted"] / f"{cid}.receipt.json"
+        want = (files_by_id.get(cid) or {}).get("onCameraSha256")
+        if receipt_path.is_file() and want:
+            got = load_json(receipt_path).get("drySha256")
+            if got and got != want:
+                raise RuntimeError(
+                    f"第 {cid} 章出镜段干声已经变了（现在 {want[:12]}，H3 验收时 {got[:12]}）。"
+                    "已验收的 H3 片段对不上新配音，必须重新 h3-prepare → h3-submit → sync-gate。"
+                )
+        else:
+            unverified_hosts.append(cid)
 
     shot_plan: list[dict[str, Any]] = []
+    if lead_in > 0:
+        cover_png = render_cover(
+            project_dir=project_dir, manifest=manifest, style=style, target=dirs["shells"] / "cover.png",
+        )
+        shot_plan.append({
+            "index": 0,
+            "chapterId": "cover",
+            "chapterOriginSec": 0.0,
+            "globalStart": 0.0,
+            "globalEnd": lead_in,
+            "localStart": 0.0,
+            "layout": "cover",
+            "source": str(cover_png),
+            "sourceStart": 0.0,
+        })
     for idx, entry in enumerate(tl_entries):
         cid = entry["id"]
         ch = ch_by_id[cid]
@@ -141,9 +299,17 @@ def compose_project(
         cuts = ch.get("cuts") or []
         if not cuts:
             raise ValueError(f"第 {cid} 章没有定义 cuts")
+        sent_file = dirs["narration"] / f"{cid}.sentences.json"
+        sentences = load_json(sent_file)["sentences"] if sent_file.is_file() else None
+        cut_times = resolve_cut_times(
+            ch,
+            sentences=sentences,
+            on_camera_sec=float(entry.get("onCameraSec") or 0.0),
+            host_clip_sec=_host_clip_sec(dirs["h3_accepted"] / f"{cid}.mp4"),
+        )
         for k, cut in enumerate(cuts):
-            local_start = float(cut.get("at", 0.0))
-            local_end = float(cuts[k + 1]["at"]) if k + 1 < len(cuts) else ch_span
+            local_start = cut_times[k]
+            local_end = cut_times[k + 1] if k + 1 < len(cuts) else ch_span
             if local_end <= local_start:
                 continue
             shot_plan.append({
@@ -187,7 +353,10 @@ def compose_project(
         host_clip = dirs["h3_accepted"] / f"{cid}.mp4"
 
         cmd = [ffmpeg_bin(), "-nostdin", "-y", "-v", "error", "-filter_complex_threads", "2", "-threads", "2"]
-        if layout == "full":
+        if layout == "cover":
+            cmd += _media_input(Path(s["source"]), 0.0, fps)
+            flt = f"[0:v]{_fit_filter(w, h)},fps={fps},format=yuv420p[v]"
+        elif layout == "full":
             src = (project_dir / s["source"]).resolve()
             if not src.is_file():
                 raise FileNotFoundError(f"缺少镜头素材: {src}")
@@ -263,14 +432,20 @@ def compose_project(
     bgm_cfg = manifest.get("bgm") or {}
     bgm_rel = (bgm_cfg.get("path") or "").strip()
     bgm_path = (project_dir / bgm_rel).resolve() if bgm_rel else None
+    voice_cfg = manifest.get("voice") or {}
+    target_lufs = float(voice_cfg.get("targetLufs", DEFAULT_TARGET_LUFS))
+    max_tp = float(voice_cfg.get("maxTruePeakDb", DEFAULT_MAX_TRUE_PEAK_DB))
 
-    from .qc import measure_integrated_lufs
-
-    target_lufs = float((manifest.get("voice") or {}).get("targetLufs", -16.5))
-    src_lufs = measure_integrated_lufs(master_dry)
-    voice_gain_db = 0.0
-    if src_lufs is not None and src_lufs > -60.0:
-        voice_gain_db = max(-12.0, min(18.0, target_lufs - src_lufs))
+    mix_wav = project_dir / "work" / "master-mix.wav"
+    mix_report = render_mix(
+        master_dry=master_dry,
+        bgm_path=bgm_path if bgm_path and bgm_path.is_file() else None,
+        bgm_volume=float(bgm_cfg.get("volumeUnderVoice", 0.085)),
+        duration=duration,
+        target_lufs=target_lufs,
+        max_true_peak_db=max_tp,
+        output=mix_wav,
+    )
 
     ass_path = dirs["subtitles"] / "narration.ass"
     use_ass = burn_subtitles and ass_path.is_file()
@@ -293,40 +468,15 @@ def compose_project(
         "-i",
         str(concat_file),
         "-i",
-        str(master_dry),
+        str(mix_wav),
     ]
-    filter_chains: list[str] = []
-    if bgm_path and bgm_path.is_file():
-        cmd += ["-stream_loop", "-1", "-i", str(bgm_path)]
-        vol_voice = float(bgm_cfg.get("volumeUnderVoice", 0.085))
-        fade_st = max(0.0, duration - 1.4)
-        filter_chains.append(
-            f"[2:a]volume={vol_voice},atrim=end={duration:.4f},apad=pad_dur=0.25,"
-            f"afade=t=out:st={fade_st:.4f}:d=1.4[m];"
-            f"[1:a]volume={voice_gain_db:+.2f}dB,apad,atrim=end={duration:.4f}[voice];"
-            "[voice][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=false[a]"
-        )
-        audio_map = "[a]"
-    else:
-        filter_chains.append(
-            f"[1:a]volume={voice_gain_db:+.2f}dB,apad,atrim=end={duration:.4f},"
-            "alimiter=limit=0.95:level=false[a]"
-        )
-        audio_map = "[a]"
-
     if use_ass:
-        filter_chains.append(f"[0:v]ass='{_escape_ass_path(ass_path)}'[v]")
-        video_map = "[v]"
+        cmd += ["-filter_complex", f"[0:v]ass='{_escape_ass_path(ass_path)}'[v]", "-map", "[v]"]
     else:
-        video_map = "0:v:0"
-
+        cmd += ["-map", "0:v:0"]
     cmd += [
-        "-filter_complex",
-        ";".join(filter_chains),
         "-map",
-        video_map,
-        "-map",
-        audio_map,
+        "1:a:0",
         "-c:v",
         "libx264",
         "-preset",
@@ -354,15 +504,87 @@ def compose_project(
     subprocess.run(cmd, check=True)
     stage_file.replace(out_file)
 
+    cover_png = None
+    if lead_in > 0:
+        cover_png = out_file.with_name(f"{out_file.stem}-cover.png")
+        subprocess.run(
+            [ffmpeg_bin(), "-nostdin", "-y", "-v", "error", "-i", str(out_file), "-frames:v", "1", str(cover_png)],
+            check=True,
+        )
+
     save_json(project_dir / "work" / "host-windows.json", host_windows)
     return {
         "output": str(out_file),
         "frames": video_nframes(out_file),
         "expectedFrames": frame_cursor,
         "durationSec": round(duration, 4),
+        "leadInSec": lead_in,
+        "coverPng": str(cover_png) if cover_png else None,
         "subtitlesBurned": use_ass,
         "hostWindows": len(host_windows),
+        "hostClipsWithoutReceipt": unverified_hosts,
+        "mix": mix_report,
         "audioSha256": audio_stream_sha256(out_file),
+    }
+
+
+def render_mix(
+    *,
+    master_dry: Path,
+    bgm_path: Path | None,
+    bgm_volume: float,
+    duration: float,
+    target_lufs: float = DEFAULT_TARGET_LUFS,
+    max_true_peak_db: float = DEFAULT_MAX_TRUE_PEAK_DB,
+    output: Path,
+    max_passes: int = 4,
+) -> dict[str, Any]:
+    """人声整体线性增益 + 限幅，测一遍再微调，直到整体响度落在目标 ±0.15 LU 以内。
+
+    限幅门限比真峰值上限再低 1 dB，给 AAC 编码留余量。latency=1 补偿限幅器的前瞻延迟，不让音画错位。
+    """
+    from .qc import measure_loudness
+
+    limit = 10.0 ** ((max_true_peak_db - 1.0) / 20.0)
+    src = measure_loudness(master_dry)["integratedLufs"]
+    gain_db = 0.0 if src is None or src <= -60.0 else target_lufs - src
+    passes: list[dict[str, Any]] = []
+    measured: dict[str, Any] = {}
+    for _ in range(max_passes):
+        gain_db = max(-12.0, min(24.0, gain_db))
+        cmd = [ffmpeg_bin(), "-nostdin", "-y", "-v", "error", "-i", str(master_dry)]
+        limiter = f"alimiter=limit={limit:.5f}:attack=5:release=50:level=false:latency=1"
+        if bgm_path is not None:
+            cmd += ["-stream_loop", "-1", "-i", str(bgm_path)]
+            fade_st = max(0.0, duration - 1.4)
+            flt = (
+                f"[1:a]volume={bgm_volume},atrim=end={duration:.4f},apad=pad_dur=0.25,"
+                f"afade=t=out:st={fade_st:.4f}:d=1.4,aformat=sample_rates=48000:channel_layouts=stereo[m];"
+                f"[0:a]volume={gain_db:+.2f}dB,apad,atrim=end={duration:.4f},"
+                "aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo[voice];"
+                f"[voice][m]amix=inputs=2:duration=first:normalize=0,{limiter}[a]"
+            )
+        else:
+            flt = (
+                f"[0:a]volume={gain_db:+.2f}dB,apad,atrim=end={duration:.4f},"
+                f"aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo,{limiter}[a]"
+            )
+        cmd += ["-filter_complex", flt, "-map", "[a]", "-t", f"{duration:.4f}", "-c:a", "pcm_s16le", str(output)]
+        subprocess.run(cmd, check=True)
+        measured = measure_loudness(output)
+        lufs = measured["integratedLufs"]
+        passes.append({"gainDb": round(gain_db, 2), "lufs": lufs, "truePeakDb": measured["truePeakDb"]})
+        if lufs is None or abs(lufs - target_lufs) <= 0.15:
+            break
+        gain_db += target_lufs - lufs
+    return {
+        "targetLufs": target_lufs,
+        "maxTruePeakDb": max_true_peak_db,
+        "limiterDbfs": round(max_true_peak_db - 1.0, 2),
+        "integratedLufs": measured.get("integratedLufs"),
+        "truePeakDb": measured.get("truePeakDb"),
+        "passes": passes,
+        "wav": str(output),
     }
 
 

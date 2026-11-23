@@ -240,6 +240,7 @@ class EndToEndComposeAndSwapTests(unittest.TestCase):
             proj = Path(td) / "demo-film"
             pf = init_project(proj, title="实测短片", subtitle="端到端验证")
             m = load_json(pf)
+            m["cover"]["enabled"] = False
             m["chapters"] = [
                 {
                     "id": "01",

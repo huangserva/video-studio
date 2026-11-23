@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .config import TOOLS_DIR, ffmpeg_bin, ffprobe_bin, handcheck_bin, syncnet_model_path, vision_python
-from .project import load_project, load_recipe, project_dirs, save_json
+from .project import load_project, load_recipe, project_dirs, save_json, sha256_file
 
 
 def _run(cmd: list[str], timeout: int = 300) -> bytes:
@@ -335,6 +335,7 @@ def review_clip(
     result: dict[str, Any] = {
         "clip": str(candidate_mp4),
         "dryWav": str(dry_wav),
+        "drySha256": sha256_file(dry_wav),
         "waveform": wave_res,
         "accepted": False,
     }
@@ -422,6 +423,15 @@ def review_clip(
                 "acceptedPath": str(accepted_output),
             })
             save_json(receipt_path, result)
+            # 已验收片段旁边留一张收据：compose 用它核对出镜干声有没有被改过。
+            save_json(accepted_output.with_suffix(".receipt.json"), {
+                "acceptedPath": str(accepted_output),
+                "auditPath": str(receipt_path),
+                "dryWav": str(dry_wav),
+                "drySha256": result["drySha256"],
+                "advanceFrames": shift,
+                "frames": actual_frames,
+            })
             return result
     finally:
         if best_winner is not None:
