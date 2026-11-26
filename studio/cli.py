@@ -27,6 +27,7 @@ from .config import (
     whisper_model_path,
 )
 from .h3 import collect_h3, prepare_h3_graphs, submit_h3
+from .native import assemble_native, plan_project, run_native
 from .project import init_project, load_project
 from .qc import run_final_qc
 from .subtitles import generate_subtitles
@@ -163,6 +164,23 @@ def cmd_h3_collect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_native(args: argparse.Namespace) -> int:
+    if args.plan:
+        res = plan_project(args.project)
+        for c in res["chunks"]:
+            print(c["id"], c["mode"], c["lines"], c["chars"], "字", c["sec"], "s", file=sys.stderr)
+        print("共", res["count"], "块，说话总长约", res["speechSec"], "s", file=sys.stderr)
+        _emit(res)
+        return 0
+    if args.assemble:
+        res = assemble_native(args.project, measure_sync=not args.no_sync)
+        _emit(res)
+        return 0 if res["ok"] else 1
+    res = run_native(args.project, chunk_ids=args.chunks or None, pilot=args.pilot, redo=args.redo or None)
+    _emit(res)
+    return 1 if res["failed"] else 0
+
+
 def cmd_sync_gate(args: argparse.Namespace) -> int:
     if args.project:
         res = review_project_clip(
@@ -293,6 +311,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--wait", action="store_true")
     p.add_argument("--poll", type=int, default=12)
     p.set_defaults(func=cmd_h3_collect)
+
+    p = sub.add_parser(
+        "native",
+        help="H3 原生出声（新项目默认）：--plan 分块计划；默认生成并逐块验收（可续跑）；--assemble 拼人声并逐字对齐",
+    )
+    p.add_argument("project")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--plan", action="store_true", help="只出分块计划（字数、帧数、时长），不碰 GPU")
+    mode.add_argument("--assemble", action="store_true", help="全部块验收后：拼人声、逐字对齐、汇总时间轴、拼每章出镜片")
+    p.add_argument("--pilot", action="store_true", help="样片先行：只跑第 1 块")
+    p.add_argument("--chunks", nargs="*", help="只跑指定块（k00 k03 …）")
+    p.add_argument("--redo", nargs="*", help="作废这些块已有的结果，从新 seed 重做（比如人工听出读音不对）")
+    p.add_argument("--no-sync", action="store_true", help="--assemble 时不对整章出镜片复测 SyncNet")
+    p.set_defaults(func=cmd_native)
 
     p = sub.add_parser("sync-gate", help="逐段 H3 验收：波形相关度 + SyncNet 逐窗 + 24fps 整帧移画 + handcheck")
     p.add_argument("candidate", help="待验收 H3 视频路径")

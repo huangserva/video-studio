@@ -186,6 +186,7 @@ class H3GraphTests(unittest.TestCase):
             proj = Path(td) / "p1"
             pf = init_project(proj, title="多章测试")
             m = load_json(pf)
+            m["presenter"]["h3Route"] = "aicg3d"
             m["chapters"].append({**m["chapters"][0], "id": "02", "title": "第二章"})
             save_json(pf, m)
             written = prepare_h3_graphs(proj, upload_media=False)

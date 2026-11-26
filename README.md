@@ -100,9 +100,20 @@ cd video-studio
 ./bin/video-studio redub projects/my-topic --chapter 03 --sentence 4   # 文字没改、只想重摇一句
 ```
 
-### H3 两条路线
+### H3 三条路线
 
-`presenter.h3Route` 选出镜生成路线，不写就用配方里的 `hostSegment.route`（讲解片配方是 `aicg3d`）。
+`presenter.h3Route` 选出镜生成路线，不写就用配方里的 `hostSegment.route`（讲解片配方是 `aicg3d`）。`init` 新建的项目写的是 `native-voice`。
+
+- `native-voice`（新项目默认，2026-11-26 起）：H3 原生出声，画面和声音同时生成，挂同一条音色参考 `presenter.voiceRef`，不配音也不锁音。用 `native` 命令：
+
+  ```bash
+  ./bin/video-studio native projects/my-topic --plan       # 分块：章内整句、每块不超过 62 字，时长 = 0.4 + 字数 × 0.2067 s 取整到 17k+5 帧
+  ./bin/video-studio native projects/my-topic --pilot      # 样片：只跑第 1 块
+  ./bin/video-studio native projects/my-topic              # 批量生成 + 逐块验收（回读 >= 0.75、片尾 >= 0.06 s、基频在参考 ±9 Hz、sync-gate），不过换 seed，最多 3 次
+  ./bin/video-studio native projects/my-topic --assemble   # 拼人声、逐字对齐、汇总 timeline.json、拼每章出镜片
+  ```
+
+  4090 共用：只在队列里没有排队任务时提交，不清队列；跑完队列空闲才释放显存。之后照常 `subtitles` → `compose` → `qc --windows`。
 
 - `aicg3d`：AICG3D 序列节点「数字人（锁定音频）」，turbo 8 步加 1.5 倍精修，1:1 腰上窗口。讲解片默认用它。
 - `native-lock`：原生 MiniMax H3 T8 节点，`lock_source`、`Ref2VA`、20 步、不精修，默认 864×480。长椅这类整屏单镜头用它。2026-11-24 用同一条干声、同一段引导片、同 3 个 seed 对照：原生 3/3 原片窗口在 0 到 +80 ms，AICG3D 有 1 条整体晚 200 多毫秒。

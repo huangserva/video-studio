@@ -78,7 +78,14 @@ PROJ="$VS/projects/<project-id>"
      - **分块与语速**：在同一段内按整句切块，不跨段，每块不超过约 60–70 字；开场和结尾的块用整屏，中间的块用小窗。**语速只靠时长控制**：`时长 = 0.4 + 字数 × 0.2067` 秒约合每秒 4.8 字（历史片的 1 倍语速），换算成帧数再取整到 17k+5。提示词里写快写慢基本没用。H3 约 0.24 s 后开口，会把台词铺满整个时长，压得太短会截字。
      - **逐块验收**（不过就换 seed，最多 3 次）：whisper 回读相似度 >= 0.75，并按读音人工核对同音字；片尾留白 >= 0.06 s；基频落在 80–95 Hz（参考音色 86.5 Hz）以内；`sync-gate` 以这块自带的音轨为准，允许整帧移画。
      - **拼接**：按顺序拼各块自带的音轨，块间间隔段内 0.10 s、换段 0.40 s，开头留 0.75 s，结尾留 0.8 s。用 whisper 逐 token 时间对齐念法稿的每个字，得出每句起止，写进 `starts.json` 和 `asr.txt`，再交给字幕和画面。小窗取帧用 `TRACK_PAD=0`。之后照常 `compose` → `qc --windows`。
-     - **参考实现**（仓库 CLI 还没并入）：`projects/long-march-01/work/native_full.py`（分块、生成、验收）和 `native_assemble.py`（拼人声、逐字对齐）。
+     - **命令**（`init` 出来的新项目默认 `presenter.h3Route: "native-voice"`）：
+       ```bash
+       ./bin/video-studio native "$PROJ" --plan        # 分块计划：字数、帧数、时长，不碰 GPU
+       ./bin/video-studio native "$PROJ" --pilot       # 样片先行：只跑第 1 块，人工试听确认音色和语速
+       ./bin/video-studio native "$PROJ"               # 批量生成 + 逐块验收，可断点续跑；--redo k05 作废重做
+       ./bin/video-studio native "$PROJ" --assemble    # 拼人声、逐字对齐、汇总时间轴、拼每章出镜片
+       ```
+       要准备 `presenter.voiceRef`（音色参考 WAV）、`presenter.guideImage`（或 `guideVideo`，缺省用 `waistImage`）当首帧、英文 `subjectDescription` 和 `scenePrompt`（章节可用 `chapters[].scenePrompt` 覆盖）。参数在配方 `hostSegment.nativeVoice`，项目里用 `presenter.h3NativeVoice` 覆盖（如 `"f0RangeHz": [80, 95]`）；画面尺寸、步数、LoRA 仍在 `presenter.h3Native`。`chapters[].hostMode` 可写 `full`/`corner`，不写就首末章整屏、其余小窗，只是排版提示，实际版式照旧由 `cuts` 决定。拼接时每块按整帧接上（块间留白取整到 2 帧），`work/h3/accepted/<章>.mp4` 的章内时刻就是片内时刻，`compose` 直接用（PAD=0，不用再半帧校准）；逐句时间写进 `<章>.sentences.json`（`atSentence` 切点能用），逐字时刻在 `work/h3/native/alignment.json`。这类项目跑 `tts`、`redub`、`h3-prepare` 会被拦下。参考实现：`projects/long-march-01/work/native_full.py`、`native_assemble.py`。
      - **实测**（210 秒讲解片）：全流程约 1 小时 30 分，比配音加锁音的 1 小时 56 分快约 25%。成片口型最低置信度 3.40，锁音版是 2.51；读音更准，人工复核也少。代价是各块音色和音高有轻微起伏，节奏不能逐句精确控制，**交片时要提醒用户连着听几块**。
    - **（备选）CosyVoice 逐句配音加锁音**：需要精确控制节奏、纯旁白不出镜，或用户点名时才用。CosyVoice3 默认音色 **`qiuzhi2046-female-v3a`、`speed: 1.3`**（备选 `qiuzhi2046-female-v3b` 更干净，语速要给 1.43）（支持 HTTP 或 `ssh:<gpu-host>:8001`，纯 zero-shot，不加 `instruct`）。每句 3 条，去头尾静音，静音 CosyVoice 句首残音并做 4 ms 头尾淡入（句首 2 ms 内跳变 > 0.01 的条目不参与择优，报告 `edgeJumpFailures` 必须为空），按有声段均方根对齐到 `-20 dBFS`，whisper 回读后挑识别最干净的几条里最短的一条。音色参考音频要以完整句收尾、提示文本逐字一致，否则每句开头会带出半个字的接缝声。回读对上了也要提醒用户亲耳听。
 2. **合规与肖像**

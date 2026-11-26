@@ -24,7 +24,21 @@
       "scale": 1.5
     },
     "seedBase": 7822077,
-    "seedRetryStride": 104729
+    "seedRetryStride": 104729,
+    "nativeVoice": {
+      "note": "H3 原生出声（presenter.h3Route = native-voice，新项目默认）：时长 = baseSec + 字数 × secPerChar，取整到 17k+5 帧；逐块验收不过换 seed，最多 maxTries 次",
+      "baseSec": 0.4,
+      "secPerChar": 0.2067,
+      "maxChars": 62,
+      "speechStartSec": 0.5,
+      "gapSec": 0.1,
+      "chapterGapSec": 0.4,
+      "tailSec": 0.8,
+      "asrMin": 0.75,
+      "tailMinSec": 0.06,
+      "f0ToleranceHz": 9.0,
+      "maxTries": 3
+    }
   },
   "gates": {
     "dryWaveformCorrMin": 0.975,

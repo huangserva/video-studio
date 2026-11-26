@@ -184,11 +184,14 @@ def build_audio_timeline(
     project_ref: str | Path,
     *,
     chapter_gap_sec: float = 0.35,
+    sample_rate: int | None = None,
 ) -> dict[str, Any]:
-    """根据已有分章 WAV 汇总主干声、时间轴，并切出每章 H3 出镜干声。"""
+    """根据已有分章 WAV 汇总主干声、时间轴，并切出每章 H3 出镜干声。
+
+    sample_rate 不给就用 voice.sampleRate（CosyVoice 24 kHz）；H3 原生出声传 48000，不降采样。"""
     project_dir, manifest = load_project(project_ref)
     dirs = project_dirs(project_dir)
-    sample_rate = int((manifest.get("voice") or {}).get("sampleRate", 24000))
+    sample_rate = int(sample_rate or (manifest.get("voice") or {}).get("sampleRate", 24000))
     lead_in = cover_lead_in_sec(manifest)
 
     timeline: list[dict[str, Any]] = []
@@ -907,6 +910,11 @@ def run_tts(
 ) -> dict[str, Any]:
     """生成干声。默认逐句配音；voice.dubbing = "chapter" 时退回整章一次生成的旧做法。"""
     project_dir, manifest = load_project(project_ref)
+    if (manifest.get("presenter") or {}).get("h3Route") == "native-voice":
+        raise RuntimeError(
+            "这个项目走 H3 原生出声（presenter.h3Route = native-voice），人声由 `video-studio native` 生成，不用 tts/redub。"
+            "要改用 CosyVoice 配音加锁音，把 presenter.h3Route 改成 aicg3d 或 native-lock。"
+        )
     dirs = project_dirs(project_dir)
     voice = manifest["voice"]
     mode = voice.get("dubbing", "sentence")

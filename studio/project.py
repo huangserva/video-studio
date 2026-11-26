@@ -160,6 +160,15 @@ def init_project(
             "qwenEditEndpoint": DEFAULT_QWEN_EDIT_ENDPOINT,
             "remoteFolder": f"video-studio-{project_dir.name}",
             "seedBase": 7822077,
+            # 默认 H3 原生出声（2026-11-26 用户拍板）：画面和声音同时生成，不配音锁音，走 `video-studio native`。
+            # 要改回 CosyVoice 配音加锁音，把 h3Route 改成 aicg3d 或 native-lock。
+            "h3Route": "native-voice",
+            "voiceRef": "assets/voice-ref.wav",
+            "guideImage": "assets/frame.png",
+            "scenePrompt": (
+                "an eye-level medium shot of <Subject 1> at the center of the frame in a clean studio, the camera still. "
+                "<Subject 1> looks into the lens with a calm, sincere expression, the hands staying relaxed."
+            ),
         },
         "bgm": {
             "path": "",

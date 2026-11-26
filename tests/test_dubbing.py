@@ -128,6 +128,7 @@ def _demo_project(root: Path, *, cover: bool = False) -> Path:
     m["voice"]["endpoint"] = "http://127.0.0.1:9"
     m["voice"]["voiceId"] = "fake"
     m["presenter"]["portraitAuthorized"] = True
+    m["presenter"]["h3Route"] = "aicg3d"  # 这里测的是 CosyVoice 配音加锁音（备选路线）
     m["chapters"] = [
         {
             "id": "01",

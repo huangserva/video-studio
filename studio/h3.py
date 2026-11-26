@@ -308,7 +308,8 @@ def build_h3_graph(
 
 # 原生 T8 lock_source 路线：2026-11-24 长椅日语锁音验收版的工作流，做同干声同 seed 对照时
 # 3/3 原片窗口在 0 到 +80 ms，比 AICG3D 序列「数字人（锁定音频）」稳。首帧来自引导图或引导片。
-H3_ROUTES = ("aicg3d", "native-lock")
+# native-voice：H3 原生出声（2026-11-26 起新项目默认），画面和声音同时生成，不走配音锁音；由 `video-studio native` 驱动。
+H3_ROUTES = ("aicg3d", "native-lock", "native-voice")
 # 默认 LoRA：digicam 真人质感（2026-11-24 用户在 5 个真人感 LoRA 里目检定版，官方六段提示词下 sync-gate 置信度 3.06）。
 # 不想挂就在 presenter.h3Native.loras 写 []。
 NATIVE_DEFAULT_LORAS = [{"name": "minimax-h3-digicam-realism-improve.safetensors", "strength": 1.0}]
@@ -530,6 +531,129 @@ def build_h3_native_graph(
     return {"prompt": graph, "client_id": client_id}
 
 
+NATIVE_VOICE_STYLE = "a realistic documentary interview shot in soft warm lamplight"
+NATIVE_VOICE_PACE = "at a natural, fluent documentary narration pace, neither slow nor rushed"
+NATIVE_VOICE_SOUNDSCAPE = "Only (S1)'s clear close-miked voice with very quiet room tone; no music, no other sounds."
+
+
+def build_h3_native_voice_prompt(
+    *,
+    subject: str,
+    scene: str,
+    seconds: float,
+    text: str,
+    multi_sentence: bool = False,
+    has_voice_ref: bool = True,
+    speech_start: float = 0.5,
+    style: str = NATIVE_VOICE_STYLE,
+    pace: str = NATIVE_VOICE_PACE,
+    soundscape: str = NATIVE_VOICE_SOUNDSCAPE,
+    language: str = "Mandarin Chinese",
+    dialogue_tag: str = "Chinese",
+) -> str:
+    """H3 原生出声提示词（long-march-01 样片 D 的写法），六段格式，台词写进 <d>…</d>。
+
+    语速只靠给定时长控制，提示词里写快写慢基本没用，所以 pace 只写「自然流畅」。
+    <Audio 1> 只取音色，不照搬台词和节奏；没有音色参考时不提 <Audio 1>（T8 严格模式会拒绝未连接的标签）。
+    """
+    if not scene.strip():
+        raise ValueError("H3 原生出声需要 scenePrompt（景别、机位、场景、表情的英文描述，用 <Subject 1> 指代人物）")
+    if not subject.strip():
+        raise ValueError("H3 原生出声需要 subjectDescription（首帧里人物的长相、发型、服装，英文）")
+    if not text.strip():
+        raise ValueError("H3 原生出声这一块没有台词")
+    voice = " with the exact voice of <Audio 1>" if has_voice_ref else ""
+    detail = " ".join([
+        f"The target video is {style.strip().rstrip('.')}.",
+        f"[Shot 1] 0.00-{seconds:.2f} seconds: {scene.strip()}",
+        f"From {speech_start:.2f} seconds (S1) speaks {language} to the lens{voice}, {pace.strip().rstrip('.')}"
+        + (" with a short natural pause between sentences" if multi_sentence else "")
+        + f", and says exactly: <d>[{dialogue_tag}] {text.strip()} </d>",
+        "The lips, jaw and visible tongue follow every syllable of (S1)'s own speech, the jaw opening on open vowels and the lips "
+        "meeting on closed sounds." + (" (S1) gives a small, steady nod between the sentences." if multi_sentence else ""),
+        "After the last syllable the lips close naturally and the expression and breathing settle until the end, with no further words.",
+        "Identity, face, hair, clothing, background, lighting and composition stay stable throughout.",
+        "No other dialogue, no narration voice-over, no subtitles, logos, watermarks, extra people or music.",
+    ])
+    head = [
+        "subject_definitions:",
+        f"<Subject 1> is {subject.strip().rstrip('.')}, as seen in the supplied opening frame. "
+        "<Subject 1> is the speaker (S1) of the target video.",
+    ]
+    retention = [
+        "retention_analysis:",
+        "<Subject 1> (appears in [Shot 1]): fully_preserved - face, hairstyle, clothing, background, lighting and "
+        "composition of the supplied opening frame are retained.",
+    ]
+    if has_voice_ref:
+        head.append("<Audio 1> is a voice reference of (S1): use only its voice timbre, pitch range and calm delivery; "
+                    "do not copy its words, timing or room sound.")
+        retention.append("<Audio 1>: timbre_reference - only the speaker's voice identity is used; the speech content is new.")
+    return "\n".join([
+        *head, "",
+        "summary:",
+        f"[reference generation + new speech] In one continuous take, <Subject 1> speaks the given {language} lines to the lens "
+        "with natural, fully synchronized lips.", "",
+        *retention, "",
+        "detailed_description:", detail, "",
+        "overall_soundscape:", soundscape.strip(), "",
+        "non_diegetic_music:", "N/A",
+    ])
+
+
+def build_h3_native_voice_graph(
+    *,
+    remote_voice_ref: str | None,
+    remote_guide: str,
+    guide_is_video: bool,
+    prompt_text: str,
+    frames: int,
+    seed: int,
+    filename_prefix: str,
+    client_id: str,
+    settings: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """H3 原生出声图：在 lock_source 图上改。
+
+    - 删掉节点 1（干声）、2（音频窗口）、15（按干声裁切），T8 去掉 drive_audio；
+    - audio_mode=native、add_source_as_reference=false、prompt_primary_audio_ordinal=0，length 直接给帧数（17k+5）；
+    - 节点 1 改成 LoadAudio 加载音色参考，接 ref_audios.ref_audio_0（提示词里的 <Audio 1>）；
+      没有参考时 task_type 改 auto（Ref2VA 不挂参考音频会报错）；
+    - 画面和声音都从 AVDecode 取：["14", 0] / ["14", 1]。
+    """
+    if (frames - 5) % 17 or frames < 5:
+        raise ValueError(f"H3 帧数只能是 17k+5，收到 {frames}")
+    g = build_h3_native_graph(
+        remote_audio="unused.wav",
+        remote_guide=remote_guide,
+        guide_is_video=guide_is_video,
+        prompt_text=prompt_text,
+        seconds=frames / 24,
+        seed=seed,
+        filename_prefix=filename_prefix,
+        client_id=client_id,
+        settings=settings,
+    )
+    nodes = g["prompt"]
+    for k in ("1", "2", "15"):
+        nodes.pop(k)
+    ci = nodes["8"]["inputs"]
+    ci.pop("drive_audio")
+    ci.update({
+        "length": int(frames),
+        "audio_mode": "native",
+        "add_source_as_reference": False,
+        "prompt_primary_audio_ordinal": 0,
+    })
+    if remote_voice_ref:
+        nodes["1"] = {"class_type": "LoadAudio", "inputs": {"audio": remote_voice_ref}}
+        ci["ref_audios.ref_audio_0"] = ["1", 0]
+    else:
+        ci["task_type"] = "auto"
+    nodes["90"]["inputs"].update({"images": ["14", 0], "audio": ["14", 1]})
+    return g
+
+
 def graph_seed_slot(graph: dict[str, Any]) -> tuple[str, str]:
     """两条路线的种子在不同节点：AICG3D 在 11.seed，原生在 9.noise_seed。"""
     nodes = graph["prompt"]
@@ -553,6 +677,11 @@ def prepare_h3_graphs(
     seed_base = int(presenter.get("seedBase", host_cfg.get("seedBase", 7822077)))
 
     route = h3_route(presenter, host_cfg)
+    if route == "native-voice":
+        raise ValueError(
+            "这个项目走 H3 原生出声（presenter.h3Route = native-voice），不用 h3-prepare/h3-submit："
+            "请用 `video-studio native <project> --plan` → `native --pilot` → `native` → `native --assemble`。"
+        )
     native = native_settings(presenter, host_cfg)
     # 出镜干声前面垫的静音长度 = 开口时刻（tts 按 voice.headPadSec 垫头）。
     speech_start = float((manifest.get("voice") or {}).get("headPadSec", DEFAULT_HEAD_PAD_SEC))

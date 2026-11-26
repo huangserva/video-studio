@@ -17,7 +17,7 @@
    - **生成**：`MiniMaxH3AudioConditioningT8` 设 `audio_mode: native`，不接 `drive_audio`；`ref_audios.ref_audio_0` 挂约 10 秒的同一条音色参考（提示词里称 `<Audio 1>`），全片音色靠它统一。
    - **分块与语速**：按段内整句切块，每块不超过约 60–70 字；语速只靠时长控制，`时长 = 0.4 + 字数 × 0.2067` 秒约合每秒 4.8 字，提示词里写快写慢基本没用。
    - **逐块验收**：whisper 回读相似度 >= 0.75，片尾留白 >= 0.06 s，基频与参考相差不超过约 ±9 Hz，并过 `sync-gate`；不过就换 seed。
-   - **参考实现**：仓库 CLI 还没并入，先看 `projects/long-march-01/work/native_full.py`（生成 + 验收）和 `native_assemble.py`（拼人声、逐字对齐；`make_tracks`/`calibrate` 要设 `TRACK_PAD=0`）。
+   - **命令**：新项目 `init` 默认 `presenter.h3Route: native-voice`，要备 `presenter.voiceRef`（音色参考）和首帧 `guideImage`/`guideVideo`。`video-studio native <project> --plan` 出分块 → `native --pilot` 跑第 1 块并人工试听 → `native` 批量生成并逐块验收（可断点续跑，`--redo k05` 作废重做）→ `native --assemble` 拼人声、逐字对齐、拼每章出镜片（章内时刻即片内时刻，取帧 PAD=0）→ `subtitles` → `compose` → `qc --windows`。这类项目不跑 `tts`/`redub`/`h3-prepare`（会直接拦下）。参考实现在 `projects/long-march-01/work/native_full.py`、`native_assemble.py`。
    - **实测**：210 秒的片全流程约 1 小时 30 分，比配音 + 锁音快约 25%，口型置信度更高；但各块音色会有轻微起伏，要提醒用户试听。
    - **以下 CosyVoice 配音规范只用作备选**：需要精确控制节奏、不出镜的纯旁白、或用户点名时才用。**备选配音规范**：CosyVoice3 默认音色 `qiuzhi2046-female-v3a`、`speed: 1.3`（1.3 倍语速；备选 `qiuzhi2046-female-v3b` 更干净但要用 `speed: 1.43` 才对齐节奏），**逐句配音**：每句生成 3 条，去头尾静音、**静音句首残音并做头尾短淡入**（句首 2 ms 内样本跳变 > 0.01 的条目不参与择优，报告里 `edgeJumpFailures` 必须为空）、按有声段均方根对齐音量，用本地 whisper 回读，挑识别最干净的几条里最短的一条。出镜干声在出镜生成前就按这个语速切好。若对已有成片做后期变速补救，使用 `setpts=PTS/1.2,trim=start=0.04,setpts=PTS-STARTPTS` 配合 `atempo=1.2` 补偿滤镜延迟，并必须重跑 `qc --windows` 验证全窗 <= 40 ms。
 9. **局部重配**：改稿只改动几句时用 `redub`，只重配改过字的句子，其余句子的采样原样沿用。`redub` 报告出镜段音频是否变了：没变就沿用已验收的 H3；变了必须重新生成并过 `sync-gate`（`compose` 会用验收收据核对，对不上直接拦下）。
