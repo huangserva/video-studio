@@ -16,7 +16,15 @@ from PIL import Image
 from studio.compliance import check_project_compliance
 from studio.compose import compose_project, swap_hosts
 from studio.config import ffmpeg_bin
-from studio.h3 import build_h3_graph, build_h3_prompt, prepare_h3_graphs, submit_h3
+from studio.h3 import (
+    build_h3_graph,
+    build_h3_native_graph,
+    build_h3_native_prompt,
+    build_h3_prompt,
+    graph_seed_slot,
+    prepare_h3_graphs,
+    submit_h3,
+)
 from studio.project import init_project, load_json, save_json
 from studio.qc import run_final_qc
 from studio.subtitles import align_chapter_cues, generate_subtitles, split_phrases
@@ -184,6 +192,83 @@ class H3GraphTests(unittest.TestCase):
             self.assertEqual(len(written), 2)
             with self.assertRaisesRegex(RuntimeError, "样片先行"):
                 submit_h3(proj, take=1, pilot_only=False)
+
+
+    def test_native_lock_route(self) -> None:
+        prompt = build_h3_native_prompt(
+            subject="the young woman in a navy T-shirt on a park bench",
+            scene="an eye-level chest-up shot of <Subject 1>, who turns to the lens.",
+            seconds=10.0, speech_start=1.0,
+            gestures=[{"start": 2.3, "end": 4.0, "action": "she looks back to the lens with one small nod"}],
+        )
+        for field in ("subject_definitions:", "summary:\n[reference generation + audio reuse]", "retention_analysis:",
+                      "<Audio 1>: fully_copy", "detailed_description:", "[Shot 1] 0.00-10.00 seconds:",
+                      "From 1.00 seconds (S1) speaks", "At 2.30-4.00 seconds she looks back to the lens with one small nod.",
+                      "overall_soundscape:", "non_diegetic_music:\nN/A"):
+            self.assertIn(field, prompt)
+        self.assertNotIn("<Picture", prompt)  # 原生图没接 Picture，严格模式会拒绝
+        with self.assertRaisesRegex(ValueError, "scenePrompt"):
+            build_h3_native_prompt(subject="x", scene=" ", seconds=5.0, gestures=[])
+        with self.assertRaisesRegex(ValueError, "subjectDescription"):
+            build_h3_native_prompt(subject=" ", scene="y", seconds=5.0, gestures=[])
+        with self.assertRaisesRegex(ValueError, "笑只放在停顿处"):
+            build_h3_native_prompt(subject="x", scene="y", seconds=5.0,
+                                   gestures=[{"start": 6.5, "end": 9.0, "action": "she leans in with a warm smile"}])
+
+        graph = build_h3_native_graph(
+            remote_audio="proj/voice-01.wav", remote_guide="proj/guide.mp4", guide_is_video=True,
+            prompt_text=prompt, seconds=10.0, seed=8974352, filename_prefix="proj/shot_01", client_id="proj-01",
+        )
+        nodes = graph["prompt"]
+        cond = nodes["8"]["inputs"]
+        self.assertEqual((cond["audio_mode"], cond["task_type"], cond["add_source_as_reference"]), ("lock_source", "Ref2VA", True))
+        self.assertEqual((cond["width"], cond["height"]), (864, 480))
+        self.assertEqual(nodes["12"]["inputs"]["steps"], 20)
+        self.assertEqual(nodes["20"]["inputs"]["image"], ["19", 0])
+        self.assertEqual(nodes["2"]["inputs"]["scene_duration_seconds"], 10.0)
+        self.assertEqual(graph_seed_slot(graph), ("9", "noise_seed"))
+        still = build_h3_native_graph(
+            remote_audio="a.wav", remote_guide="proj/guide.png", guide_is_video=False, prompt_text=prompt,
+            seconds=6.0, seed=1, filename_prefix="p", client_id="c",
+        )["prompt"]
+        self.assertEqual(still["18"]["class_type"], "LoadImage")
+        self.assertNotIn("19", still)
+        self.assertEqual(still["20"]["inputs"]["image"], ["18", 0])
+        self.assertEqual(still["30"]["inputs"]["lora_name"], "minimax-h3-digicam-realism-improve.safetensors")
+        self.assertEqual(still["7"]["inputs"]["model"], ["30", 0])
+        bare = build_h3_native_graph(
+            remote_audio="a.wav", remote_guide="proj/guide.png", guide_is_video=False, prompt_text=prompt,
+            seconds=6.0, seed=1, filename_prefix="p", client_id="c", settings={"loras": []},
+        )["prompt"]
+        self.assertNotIn("30", bare)
+        self.assertEqual(bare["7"]["inputs"]["model"], ["6", 0])
+        lora = build_h3_native_graph(
+            remote_audio="a.wav", remote_guide="proj/guide.png", guide_is_video=False, prompt_text=prompt,
+            seconds=6.0, seed=1, filename_prefix="p", client_id="c",
+            settings={"loras": [{"name": "facial.safetensors", "strength": 1.4, "trigger": "Facial Realism"}]},
+        )["prompt"]
+        self.assertEqual(lora["30"]["inputs"], {"lora_name": "facial.safetensors", "strength_model": 1.4, "model": ["6", 0]})
+        self.assertEqual(lora["7"]["inputs"]["model"], ["30", 0])
+        self.assertTrue(lora["8"]["inputs"]["prompt"].startswith("Facial Realism. subject_definitions:"))
+
+        with tempfile.TemporaryDirectory() as td:
+            proj = Path(td) / "p2"
+            pf = init_project(proj, title="原生路线")
+            m = load_json(pf)
+            m["presenter"].update({"h3Route": "native-lock", "guideVideo": "assets/turn.mp4",
+                                   "subjectDescription": "the young woman in a navy T-shirt",
+                                   "scenePrompt": "an eye-level chest-up shot of <Subject 1>, who turns to the lens."})
+            save_json(pf, m)
+            g = load_json(prepare_h3_graphs(proj, upload_media=False)[0])
+            self.assertEqual(g["prompt"]["8"]["inputs"]["audio_mode"], "lock_source")
+            self.assertEqual(g["prompt"]["18"]["inputs"]["file"], "video-studio-p2/guide.mp4")
+            self.assertEqual(g["prompt"]["1"]["inputs"]["audio"], "video-studio-p2/voice-01.wav")
+            self.assertEqual(g["prompt"]["30"]["inputs"]["lora_name"], "minimax-h3-digicam-realism-improve.safetensors")
+            self.assertIn("[reference generation + audio reuse]", g["prompt"]["8"]["inputs"]["prompt"])
+            m["presenter"]["h3Route"] = "bogus"
+            save_json(pf, m)
+            with self.assertRaisesRegex(ValueError, "未知 H3 路线"):
+                prepare_h3_graphs(proj, upload_media=False)
 
 
 class SyncGateMathTests(unittest.TestCase):

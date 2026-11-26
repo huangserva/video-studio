@@ -100,6 +100,30 @@ cd video-studio
 ./bin/video-studio redub projects/my-topic --chapter 03 --sentence 4   # 文字没改、只想重摇一句
 ```
 
+### H3 两条路线
+
+`presenter.h3Route` 选出镜生成路线，不写就用配方里的 `hostSegment.route`（讲解片配方是 `aicg3d`）。
+
+- `aicg3d`：AICG3D 序列节点「数字人（锁定音频）」，turbo 8 步加 1.5 倍精修，1:1 腰上窗口。讲解片默认用它。
+- `native-lock`：原生 MiniMax H3 T8 节点，`lock_source`、`Ref2VA`、20 步、不精修，默认 864×480。长椅这类整屏单镜头用它。2026-11-24 用同一条干声、同一段引导片、同 3 个 seed 对照：原生 3/3 原片窗口在 0 到 +80 ms，AICG3D 有 1 条整体晚 200 多毫秒。
+
+原生路线的提示词按 H3 官方数字人说话版六段格式自动生成（AICG3D `prompt_guides/digital_human_audio_performance`）：`subject_definitions`、`summary`（以 `[reference generation + audio reuse]` 开头）、`retention_analysis`（`<Audio 1>: fully_copy`）、`detailed_description`、`overall_soundscape`、`non_diegetic_music`。不写台词，口型交给锁定干声。原生图没有接 Picture，所以只引用 `<Audio 1>`，人物按「首帧里的人」来描述。要写的字段：
+
+- `presenter.subjectDescription`：首帧人物的长相、发型和服装，用英文写。
+- `presenter.scenePrompt`（章节里可以用 `chapters[].scenePrompt` 覆盖）：用英文写景别、机位、场景和开场动作，用 `<Subject 1>` 指代人物。
+- `presenter.sceneSummary`（可选）：一句话概括；不写就用通用说法。
+- `presenter.guideVideo`（可选）：首帧引导片，比如 22 帧闭唇转头。没有就用 `waistImage` 当首帧。
+- `chapters[].gestures`：每句最多一个小动作，会写成「At 秒-秒 seconds 动作」。**说话的句子上不要安排 smile、laugh、grin**，写了 `prepare` 会直接报错。2026-11-24 实测，这类词会让后半段定格成露齿笑，嘴不再跟着字开合，口型也会漂。笑只放在句间停顿里，提示词已经自动带上这一句。
+
+开口时刻取 `voice.headPadSec`。尺寸、步数、风格写在 `presenter.h3Native`，例如 `{"width": 864, "height": 480, "steps": 20, "style": "a realistic natural live-action shot in soft daylight", "soundscape": "..."}`。
+
+原生路线**默认挂 digicam 真人质感 LoRA**（`minimax-h3-digicam-realism-improve.safetensors`，强度 1.0，没有触发词）。2026-11-24 在 5 个真人感 LoRA 里由人工目检定版，用官方格式提示词跑，sync-gate 置信度 3.06。不挂就写 `"loras": []`；换别的就写 `"loras": [{"name": "...", "strength": 1.0, "trigger": "..."}]`，触发词会放在提示词最前面。换 LoRA 时注意两点：
+
+- 查 ComfyUI 日志里有没有 `lora key not loaded`。键名不带 `diffusion_model.` 前缀的 LoRA 会被整个跳过，不报错，只是不起作用（facial-realism-closeup 原版就是这样）。
+- 看嘴有没有张开。「影帝表演」这个 LoRA 会压住口型，最响的 8 个元音里有 7 个闭着嘴，不能用在说话镜头上。
+
+两条路线都照样逐段跑 `sync-gate`。
+
 ### 切点写法
 
 `chapters[].cuts[]` 的时间可以写三种：

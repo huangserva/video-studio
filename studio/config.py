@@ -21,11 +21,17 @@ DEFAULT_QWEN_EDIT_ENDPOINT = os.environ.get("VIDEO_STUDIO_QWEN_EDIT_ENDPOINT", "
 
 # 配音与响度默认值（2026-11 起按 MemT 传播版的做法）
 DEFAULT_SPEED = 1.3
+# 新项目默认音色：qiuzhi2046-female-v3a（参考音频裁到完整句、最后一个字后淡出，2026-11-25 用户试听选定：节奏最好）。
+# v3b（另过 htdemucs 去背景音乐）更干净但同 speed 下慢约 10%，要用时语速给 1.43。
+DEFAULT_VOICE_ID = "qiuzhi2046-female-v3a"
+VOICE_DEFAULT_SPEED = {"qiuzhi2046-female-v3a": 1.3, "qiuzhi2046-female-v3b": 1.43}
 DEFAULT_TAKES_PER_SENTENCE = 3
 DEFAULT_SENTENCE_GAP_SEC = 0.30
 DEFAULT_HEAD_PAD_SEC = 0.12
 DEFAULT_TAIL_PAD_SEC = 0.25
 DEFAULT_SENTENCE_RMS_DB = -20.0
+# 句首/句尾 2ms 内允许的最大样本跳变（满幅 1.0）。超过就是拼接时能听到的「啪」声
+DEFAULT_EDGE_JUMP_MAX = 0.01
 DEFAULT_TARGET_LUFS = -14.5
 DEFAULT_LUFS_TOLERANCE = 0.5
 DEFAULT_MAX_TRUE_PEAK_DB = -1.0

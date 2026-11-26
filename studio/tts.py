@@ -18,6 +18,7 @@ import numpy as np
 
 from .config import (
     DEFAULT_COVER_SEC,
+    DEFAULT_EDGE_JUMP_MAX,
     DEFAULT_HEAD_PAD_SEC,
     DEFAULT_MAX_TRUE_PEAK_DB,
     DEFAULT_SENTENCE_GAP_SEC,
@@ -404,6 +405,96 @@ def trim_silence(x: np.ndarray, sample_rate: int, *, threshold_db: float = -45.0
     return x[a:b]
 
 
+def trim_lead_ambience(
+    x: np.ndarray, sample_rate: int, *, keep_sec: float = 0.15, min_lead_sec: float = 0.25, onset_below_peak_db: float = 18.0,
+    fade_sec: float = 0.03,
+) -> tuple[np.ndarray, float]:
+    """去掉开口前的「垫底噪」：零样本模型常在第一个字前先生成一段 -30~-40 dB 的环境声/气声（参考音频带底噪时最明显），
+    它高于 trim_silence 的阈值所以会留下，拼进成片就是每句开头一段杂音。
+
+    开口 = 第一个比最响帧低不到 onset_below_peak_db 的 10 ms 帧。开口前超过 min_lead_sec 时，只保留开口前 keep_sec
+    （足够放下 s、f、h 这类轻辅音），并在起点做 fade_sec 淡入。返回 (新波形, 去掉的秒数)。
+    """
+    hop = max(1, int(sample_rate * 0.01))
+    db = _frame_db(x, hop)
+    if len(db) < 3:
+        return x, 0.0
+    onset = int(np.argmax(db >= float(db.max()) - onset_below_peak_db))
+    lead = onset * hop / sample_rate
+    if lead <= min_lead_sec:
+        return x, 0.0
+    a = max(0, onset * hop - int(round(keep_sec * sample_rate)))
+    y = x[a:].astype(np.float32).copy()
+    f = min(len(y), int(round(fade_sec * sample_rate)))
+    y[:f] *= np.linspace(0.0, 1.0, f, dtype=np.float32)
+    return y, round(a / sample_rate, 3)
+
+
+def find_head_residue(x: np.ndarray, sample_rate: int) -> float | None:
+    """找句首残音：CosyVoice 零样本会把参考音频的最后一点声音接在句首（第 0 个样本就在发声），
+    后面跟一个能量谷才进真正的第一个字。返回谷起点（秒）；没有这种形状返回 None。
+
+    只认「前面一团 >= -26 dB 的声音 → 掉下去至少 8 dB 且 <= -27 dB 的谷 → 200 ms 内回到 > -22 dB」，
+    只在开头 220 ms 内找。返回谷的起点而不是谷底：谷里可能是 s、sh、f 这类轻辅音。
+    """
+    hop = max(1, int(sample_rate * 0.01))
+    e = _frame_db(x[: hop * 30], hop)
+    if len(e) < 30:
+        return None
+    for v in range(2, 22):
+        head = float(e[:v].max())
+        if head < -26.0 or e[v] > min(-27.0, head - 8.0):
+            continue
+        end = v
+        while end + 1 < 30 and e[end + 1] <= min(-25.0, head - 6.0):
+            end += 1
+        if end + 1 < 30 and float(e[end + 1 : end + 21].max()) > -22.0:
+            return v * hop / sample_rate
+        return None
+    return None
+
+
+def edge_fade(x: np.ndarray, sample_rate: int, *, head_sec: float = 0.004, tail_sec: float = 0.004) -> np.ndarray:
+    """头尾各做一个很短的线性淡入淡出，消掉从数字静音直接跳进声音的爆音。不改变长度。"""
+    y = x.astype(np.float32).copy()
+    h = min(len(y), int(round(head_sec * sample_rate)))
+    t = min(len(y), int(round(tail_sec * sample_rate)))
+    if h > 0:
+        y[:h] *= np.linspace(0.0, 1.0, h, dtype=np.float32)
+    if t > 0:
+        y[len(y) - t :] *= np.linspace(1.0, 0.0, t, dtype=np.float32)
+    return y
+
+
+def strip_head_residue(x: np.ndarray, sample_rate: int, *, fade_sec: float = 0.015) -> tuple[np.ndarray, float | None]:
+    """把句首残音静音（谷起点之前置零，谷起点处 fade_sec 淡入），再做头尾短淡入淡出。长度不变。"""
+    at = find_head_residue(x, sample_rate)
+    y = x.astype(np.float32).copy()
+    if at is not None:
+        a = int(round(at * sample_rate))
+        y[:a] = 0.0
+        f = min(len(y) - a, int(round(fade_sec * sample_rate)))
+        y[a : a + f] *= np.linspace(0.0, 1.0, f, dtype=np.float32)
+    return edge_fade(y, sample_rate), at
+
+
+def edge_jump(x: np.ndarray, sample_rate: int, *, window_sec: float = 0.002) -> float:
+    """拼进数字静音时，句首/句尾 window_sec 内的最大样本跳变（含从 0 跳到第一个样本）。"""
+    if len(x) == 0:
+        return 0.0
+    n = max(1, int(round(window_sec * sample_rate)))
+    head = np.concatenate([[0.0], x[:n].astype(np.float64)])
+    tail = np.concatenate([x[-n:].astype(np.float64), [0.0]])
+    return round(float(max(np.abs(np.diff(head)).max(), np.abs(np.diff(tail)).max())), 5)
+
+
+def _first_char(text: str) -> str:
+    from .subtitles import normalize_text
+
+    t = normalize_text(text or "")
+    return t[:1]
+
+
 def voiced_rms_db(x: np.ndarray, sample_rate: int) -> float:
     """有声段均方根：只统计比最响帧低 30 dB 以内、且高于 -50 dBFS 的 20 ms 帧。"""
     hop = max(1, int(sample_rate * 0.02))
@@ -514,8 +605,11 @@ def asr_similarity(asr_text: str, *refs: str) -> float:
     return round(best, 4)
 
 
-def choose_take(takes: list[dict[str, Any]], *, margin: float = 0.03) -> int:
-    """回读最干净的几条里挑最短的一条；没有 ASR 时只能挑最短。"""
+def choose_take(takes: list[dict[str, Any]], *, margin: float = 0.03, edge_jump_max: float = DEFAULT_EDGE_JUMP_MAX) -> int:
+    """先排除句首/句尾有爆音（edgeJump 超限）的条目，再在回读最干净的几条里挑最短的一条；没有 ASR 时只能挑最短。
+    全部超限时不排除（调用方在报告里如实标出）。"""
+    clean = [t for t in takes if t.get("edgeJump") is None or float(t["edgeJump"]) <= edge_jump_max]
+    takes = clean or takes
     scored = [t for t in takes if t.get("asrScore") is not None]
     if not scored:
         return int(min(takes, key=lambda t: t["durationSec"])["take"])
@@ -659,20 +753,46 @@ def dub_chapter_by_sentence(
             synthesize_wav(
                 endpoint=voice["endpoint"], voice_id=voice_id, text=pair["tts"], speed=speed, output=raw,
             )
-            x = trim_silence(load_mono(raw, sr), sr)
-            x = level_sentence(x, sr, target_db=target_rms)
+            x0, lead_cut = trim_lead_ambience(trim_silence(load_mono(raw, sr), sr), sr)
+            stripped, residue = strip_head_residue(x0, sr)
+            x = edge_fade(level_sentence(stripped, sr, target_db=target_rms), sr)
             write_float(final, x, sr)
-            infos.append({"take": k, "wav": str(final.relative_to(project_dir)), "durationSec": round(len(x) / sr, 4)})
+            info = {"take": k, "wav": str(final.relative_to(project_dir)), "durationSec": round(len(x) / sr, 4),
+                    "headResidueSec": None if residue is None else round(residue, 3), "edgeJump": edge_jump(x, sr),
+                    "leadAmbienceCutSec": lead_cut}
+            if residue is not None:
+                # 句首残音静音后可能吃掉真的第一个字，留一条只淡入的备选，回读后再定
+                keep = sent_dir / f"{key}-r{roll}-t{k}.keep.wav"
+                xk = edge_fade(level_sentence(edge_fade(x0, sr), sr, target_db=target_rms), sr)
+                write_float(keep, xk, sr)
+                info["_keep"] = (str(keep.relative_to(project_dir)), round(len(xk) / sr, 4), edge_jump(xk, sr))
+            infos.append(info)
         generated_takes.append(infos)
 
     new_wavs = [project_dir / t["wav"] for infos in generated_takes for t in infos]
+    new_wavs += [project_dir / t["_keep"][0] for infos in generated_takes for t in infos if "_keep" in t]
     asr = transcribe_wavs(new_wavs) if new_wavs else {}
     asr_available = asr is not None
     generated: list[int] = []
     for (slot, pair, key, roll), infos in zip(pending, generated_takes):
         trs: dict[int, Any] = {}
+        ref_first = {_first_char(pair["text"]), _first_char(pair["tts"])}
         for t in infos:
             tr = (asr or {}).get(str(project_dir / t["wav"]))
+            keep = t.pop("_keep", None)
+            if keep is not None and asr is not None:
+                tr_k = asr.get(str(project_dir / keep[0]))
+                if tr is not None and tr_k is not None:
+                    txt_s, txt_k = transcription_text(tr), transcription_text(tr_k)
+                    sc_s = asr_similarity(txt_s, pair["text"], pair["tts"])
+                    sc_k = asr_similarity(txt_k, pair["text"], pair["tts"])
+                    lost_first = _first_char(txt_k) in ref_first and _first_char(txt_s) != _first_char(txt_k)
+                    if lost_first or sc_s < sc_k - 0.005:
+                        t.update({"wav": keep[0], "durationSec": keep[1], "edgeJump": keep[2]})
+                        tr = tr_k
+                        t["headResidueStripped"] = False
+                    else:
+                        t["headResidueStripped"] = True
             if tr is None:
                 t["asrText"], t["asrScore"] = None, None
             else:
@@ -694,6 +814,9 @@ def dub_chapter_by_sentence(
             "asrText": ct["asrText"],
             "asrScore": ct["asrScore"],
             "asrTranscription": trs.get(chosen),
+            "edgeJump": ct.get("edgeJump"),
+            "headResidueSec": ct.get("headResidueSec"),
+            "headResidueStripped": ct.get("headResidueStripped"),
         }
         generated.append(pair["index"])
 
@@ -747,9 +870,17 @@ def dub_chapter_by_sentence(
         for e in final_entries
         if e.get("asrScore") is not None and float(e["asrScore"]) < 0.85
     ]
+    edge_bad = [
+        {"index": e["index"], "edgeJump": e["edgeJump"], "text": e["text"]}
+        for e in final_entries
+        if e.get("edgeJump") is not None and float(e["edgeJump"]) > DEFAULT_EDGE_JUMP_MAX
+    ]
     return {
         "id": cid,
         "mode": "sentence",
+        "edgeJumpMax": DEFAULT_EDGE_JUMP_MAX,
+        "edgeJumpFailures": edge_bad,
+        "headResidueStripped": [e["index"] for e in final_entries if e.get("headResidueStripped")],
         "sentences": len(final_entries),
         "generated": generated,
         "reused": reused,
@@ -910,6 +1041,8 @@ def redub(
         "chapterDurationAfterSec": new_sent.get("durationSec"),
         "asrAvailable": rep.get("asrAvailable"),
         "lowAsrSentences": rep.get("lowAsrSentences"),
+        "edgeJumpFailures": rep.get("edgeJumpFailures"),
+        "headResidueStripped": rep.get("headResidueStripped"),
         "hostSegments": host_impact,
         "cutsWithFixedSeconds": stale_cuts,
         "note": (

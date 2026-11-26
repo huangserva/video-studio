@@ -15,6 +15,8 @@ from .config import (
     DEFAULT_QWEN_EDIT_ENDPOINT,
     DEFAULT_SENTENCE_GAP_SEC,
     DEFAULT_SPEED,
+    DEFAULT_VOICE_ID,
+    VOICE_DEFAULT_SPEED,
     DEFAULT_TAKES_PER_SENTENCE,
     DEFAULT_TARGET_LUFS,
     DEFAULT_TTS_ENDPOINT,
@@ -103,7 +105,7 @@ def init_project(
     industry: str = "I20",
     recipe: str = "curator-h3-explainer",
     style: str = "museum-paper",
-    voice_id: str = "default",
+    voice_id: str = DEFAULT_VOICE_ID,
 ) -> Path:
     project_dir = project_dir.expanduser().resolve()
     if (project_dir / "project.json").exists():
@@ -133,7 +135,7 @@ def init_project(
             "provider": "cosyvoice3",
             "endpoint": DEFAULT_TTS_ENDPOINT,
             "voiceId": voice_id,
-            "speed": DEFAULT_SPEED,
+            "speed": VOICE_DEFAULT_SPEED.get(voice_id, DEFAULT_SPEED),
             "sampleRate": 24000,
             "takesPerSentence": DEFAULT_TAKES_PER_SENTENCE,
             "sentenceGapSec": DEFAULT_SENTENCE_GAP_SEC,

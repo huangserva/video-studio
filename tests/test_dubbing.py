@@ -22,6 +22,9 @@ from studio.qc import run_final_qc
 from studio.subtitles import generate_subtitles
 from studio.tts import (
     choose_take,
+    edge_fade,
+    edge_jump,
+    find_head_residue,
     h3_output_sec,
     level_sentence,
     load_int16,
@@ -29,10 +32,13 @@ from studio.tts import (
     redub,
     run_tts,
     split_sentences,
+    strip_head_residue,
+    trim_lead_ambience,
     suggest_on_camera,
     trim_silence,
     voiced_rms_db,
 )
+from studio.config import DEFAULT_EDGE_JUMP_MAX
 
 SR = 24000
 
@@ -79,6 +85,40 @@ class FakeVoice:
                 ],
             }]
         return out
+
+
+def _burst_then_speech(*, fricative: bool = False, seed: int = 0) -> np.ndarray:
+    """模拟 CosyVoice 句首残音：第 0 个样本就是 40ms 的一团响声，接 80ms 能量谷（可选轻辅音噪声），再进 0.6s 正文。"""
+    rng = np.random.default_rng(seed)
+    burst = 0.35 * np.cos(2 * math.pi * 300 * np.arange(int(0.04 * SR)) / SR)
+    valley = (0.02 if fricative else 0.003) * rng.standard_normal(int(0.08 * SR))
+    t = np.arange(int(0.6 * SR)) / SR
+    speech = 0.25 * np.sin(2 * math.pi * 200 * t)
+    return np.concatenate([burst, valley, speech]).astype(np.float32)
+
+
+class BurstVoice(FakeVoice):
+    """句首带残音、没有前导静音的假 CosyVoice；drop_first=True 时假 whisper 对静音过的版本少认第一个字。"""
+
+    def __init__(self, drop_first: bool = False) -> None:
+        super().__init__()
+        self.drop_first = drop_first
+
+    def synth(self, *, endpoint: str, voice_id: str, text: str, speed: float, output: Path, timeout: int = 240) -> Path:
+        self.calls.append(text)
+        x = np.concatenate([_burst_then_speech(seed=len(self.calls)), np.zeros(int(0.12 * len(text) * SR) // 4, np.float32)])
+        x[int(0.12 * SR):] += 0.2 * np.sin(2 * math.pi * 210 * np.arange(len(x) - int(0.12 * SR)) / SR)
+        pcm = np.clip(x * 32767, -32768, 32767).astype("<i2")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(output), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SR)
+            w.writeframes(pcm.tobytes())
+        base = str(output).replace(".raw.wav", "")
+        self.text_of[base + ".wav"] = text[1:] if self.drop_first else text
+        self.text_of[base + ".keep.wav"] = text
+        return output
 
 
 def _demo_project(root: Path, *, cover: bool = False) -> Path:
@@ -165,6 +205,63 @@ class SentenceUnitTests(unittest.TestCase):
         self.assertLess(abs(voiced_rms_db(z, SR) + 20.0), 0.5)
         self.assertLessEqual(float(np.max(np.abs(z))), 10 ** (-1 / 20) + 1e-4)
 
+    def test_head_residue_is_muted_without_touching_length_or_fricative(self) -> None:
+        x = _burst_then_speech()
+        self.assertGreater(edge_jump(x, SR), 0.1)  # 原样拼进静音就是「啪」
+        at = find_head_residue(x, SR)
+        self.assertIsNotNone(at)
+        self.assertAlmostEqual(at, 0.04, delta=0.015)
+        y, at2 = strip_head_residue(x, SR)
+        self.assertEqual(len(y), len(x))
+        self.assertEqual(at2, at)
+        self.assertLess(float(np.abs(y[: int(0.03 * SR)]).max()), 1e-6)
+        self.assertLessEqual(edge_jump(y, SR), DEFAULT_EDGE_JUMP_MAX)
+        f = _burst_then_speech(fricative=True)
+        yf, atf = strip_head_residue(f, SR)
+        self.assertIsNotNone(atf)
+        mid = slice(int(0.07 * SR), int(0.11 * SR))  # 谷里的轻辅音要留着
+        self.assertGreater(float(np.sqrt(np.mean(yf[mid] ** 2))), 0.5 * float(np.sqrt(np.mean(f[mid] ** 2))))
+
+    def test_speech_starting_at_zero_only_gets_short_fade(self) -> None:
+        t = np.arange(int(0.8 * SR)) / SR
+        x = (0.3 * np.cos(2 * math.pi * 200 * t)).astype(np.float32)
+        self.assertIsNone(find_head_residue(x, SR))
+        y, at = strip_head_residue(x, SR)
+        self.assertIsNone(at)
+        self.assertLessEqual(edge_jump(y, SR), DEFAULT_EDGE_JUMP_MAX)
+        self.assertTrue(np.allclose(y[int(0.01 * SR): -int(0.01 * SR)], x[int(0.01 * SR): -int(0.01 * SR)]))
+        self.assertLessEqual(edge_jump(edge_fade(x, SR), SR), DEFAULT_EDGE_JUMP_MAX)
+
+    def test_lead_ambience_is_trimmed_but_short_fricative_kept(self) -> None:
+        rng = np.random.default_rng(1)
+        t = np.arange(int(0.8 * SR)) / SR
+        speech = (0.3 * np.sin(2 * math.pi * 200 * t)).astype(np.float32)
+        amb = (0.02 * rng.standard_normal(int(0.6 * SR))).astype(np.float32)  # 约 -34 dB 的开口前底噪
+        y, cut = trim_lead_ambience(np.concatenate([amb, speech]), SR)
+        self.assertAlmostEqual(cut, 0.45, delta=0.02)
+        self.assertAlmostEqual(len(y) / SR, 0.95, delta=0.02)
+        self.assertLess(abs(float(y[0])), 1e-6)
+        fric = (0.03 * rng.standard_normal(int(0.12 * SR))).astype(np.float32)  # 120 ms 轻辅音不能动
+        z, cut2 = trim_lead_ambience(np.concatenate([fric, speech]), SR)
+        self.assertEqual(cut2, 0.0)
+        self.assertEqual(len(z), len(fric) + len(speech))
+
+    def test_new_project_defaults_to_v3a_voice_and_speed(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            m = load_json(init_project(Path(td) / "p", title="默认音色"))
+            self.assertEqual(m["voice"]["voiceId"], "qiuzhi2046-female-v3a")
+            self.assertAlmostEqual(m["voice"]["speed"], 1.3)
+            m2 = load_json(init_project(Path(td) / "q", title="更干净的备选", voice_id="qiuzhi2046-female-v3b"))
+            self.assertAlmostEqual(m2["voice"]["speed"], 1.43)
+
+    def test_choose_take_skips_edge_jump_failures(self) -> None:
+        takes = [
+            {"take": 1, "durationSec": 1.5, "asrScore": 0.98, "edgeJump": 0.2},
+            {"take": 2, "durationSec": 1.8, "asrScore": 0.97, "edgeJump": 0.002},
+        ]
+        self.assertEqual(choose_take(takes), 2)
+        self.assertEqual(choose_take([{**t, "edgeJump": 0.3} for t in takes]), 1)  # 全超限时不排除
+
     def test_h3_rounding_matches_observed(self) -> None:
         for req, out in [(5.8, 5.875), (6.7, 6.583), (8.15, 8.0), (8.24, 8.0), (8.45, 8.708)]:
             self.assertAlmostEqual(h3_output_sec(req), out, places=2)
@@ -232,6 +329,24 @@ class SentenceDubbingTests(unittest.TestCase):
             rd3 = redub(proj, chapter_id="01")
             host3 = {h["chapterId"]: h for h in rd3["hostSegments"]}
             self.assertFalse(host3["01"]["onCameraAudioUnchanged"])
+
+    def test_dub_strips_head_residue_and_falls_back_when_first_char_lost(self) -> None:
+        for drop_first, expect_stripped in [(False, True), (True, False)]:
+            fake = BurstVoice(drop_first=drop_first)
+            with self.subTest(drop_first=drop_first), tempfile.TemporaryDirectory() as td, \
+                    mock.patch("studio.tts.synthesize_wav", side_effect=fake.synth), \
+                    mock.patch("studio.tts.transcribe_wavs", side_effect=fake.asr):
+                proj = _demo_project(Path(td) / "dub")
+                res = run_tts(proj, chapter_gap_sec=0.35)
+                rep = res["chapters"][0]
+                self.assertEqual(rep["edgeJumpFailures"], [])
+                man = load_json(proj / "work" / "narration" / "01.sentences.json")
+                for e in man["sentences"]:
+                    self.assertIsNotNone(e["headResidueSec"])
+                    self.assertEqual(e["headResidueStripped"], expect_stripped)
+                    self.assertLessEqual(e["edgeJump"], DEFAULT_EDGE_JUMP_MAX)
+                    self.assertEqual(e["wav"].endswith(".keep.wav"), not expect_stripped)
+                    self.assertEqual(e["asrScore"], 1.0)
 
     def test_redub_refuses_legacy_chapter(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -9,6 +9,7 @@
   "fps": 30,
   "hostSegment": {
     "provider": "local-h3-aicg3d-13",
+    "route": "aicg3d",
     "resolution": "480P",
     "aspectRatio": "1:1",
     "outputSize": [960, 960],

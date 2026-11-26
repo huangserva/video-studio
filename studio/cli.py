@@ -102,7 +102,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         industry=args.industry,
         recipe=args.recipe,
         style=args.style,
-        voice_id=args.voice_id,
+        **({"voice_id": args.voice_id} if args.voice_id else {}),
     )
     _emit({"created": str(pf)})
     return 0
@@ -248,7 +248,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--industry", default="I20", help="行业 ID（默认 I20 软件和 App）")
     p.add_argument("--recipe", default="curator-h3-explainer")
     p.add_argument("--style", default="museum-paper")
-    p.add_argument("--voice-id", default="default")
+    p.add_argument("--voice-id", default=None, help="CosyVoice 音色 ID，默认 qiuzhi2046-female-v3a（语速 1.3）")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("check", help="检查项目简报的用途/行业拦截与合规清单")
